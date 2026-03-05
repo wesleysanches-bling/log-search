@@ -25,6 +25,15 @@ function buildSearchQuery(filters: ISearchFilters): object {
     mustClauses.push(esb.matchQuery('transaction', filters.transaction));
   }
 
+  if (filters.freeText) {
+    mustClauses.push(
+      esb.multiMatchQuery(
+        ['data', 'integration.out.url', 'integration.out.destiny', 'statusMessage', 'host'],
+        filters.freeText,
+      ).type('phrase'),
+    );
+  }
+
   const requestBody = esb
     .requestBodySearch()
     .query(esb.boolQuery().must(mustClauses))

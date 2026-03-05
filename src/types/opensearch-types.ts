@@ -9,6 +9,7 @@ export interface ISearchFilters {
   userIdentifier?: string;
   action?: string;
   transaction?: string;
+  freeText?: string;
 }
 
 export interface IOpenSearchHit<T = ILogEntry> {

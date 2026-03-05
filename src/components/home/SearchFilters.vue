@@ -25,6 +25,7 @@
   const selectedAction = ref<string | null>(null);
   const customAction = ref('');
   const transaction = ref('');
+  const freeText = ref('');
   const useCustomAction = ref(false);
 
   const actionOptions: IDropdownOption[] = COMMON_ACTIONS.map((action) => ({
@@ -53,6 +54,10 @@
       filters.transaction = transaction.value.trim();
     }
 
+    if (freeText.value.trim()) {
+      filters.freeText = freeText.value.trim();
+    }
+
     emit('search', filters);
   }
 
@@ -62,6 +67,7 @@
     selectedAction.value = null;
     customAction.value = '';
     transaction.value = '';
+    freeText.value = '';
   }
 </script>
 
@@ -137,6 +143,19 @@
           class="w-full"
           @keyup.enter="handleSearch"
         />
+      </div>
+
+      <div class="flex flex-col gap-1.5 lg:col-span-2">
+        <label class="text-sm font-medium text-slate-600">Busca Livre</label>
+        <InputText
+          v-model="freeText"
+          placeholder="URL, texto, destino... Ex: account.pagcerto.com.br"
+          class="w-full"
+          @keyup.enter="handleSearch"
+        />
+        <span class="text-xs text-slate-400">
+          Busca em: data, integration.out.url, statusMessage, host
+        </span>
       </div>
     </div>
 
