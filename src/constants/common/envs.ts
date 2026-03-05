@@ -1,0 +1,3 @@
+export const OPENSEARCH_BASE_URL = import.meta.env.VITE_OPENSEARCH_BASE_URL;
+export const OPENSEARCH_INDEX = import.meta.env.VITE_OPENSEARCH_INDEX;
+export const OPENSEARCH_DEFAULT_USER = import.meta.env.VITE_OPENSEARCH_DEFAULT_USER;
