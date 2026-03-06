@@ -80,3 +80,14 @@ export interface ILogEntryParsed extends Omit<ILogEntry, 'data'> {
   data: string;
   dataParsed: Record<string, unknown> | null;
 }
+
+export interface ISavedFilter {
+  id: string;
+  name: string;
+  filters: ISearchFilters;
+  results?: IOpenSearchResponse;
+  totalHits?: number;
+  searchDuration?: number;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -17,3 +17,6 @@ Thumbs.db
 logs
 *.log
 npm-debug.log*
+
+# Saved filters (storage)
+storage/

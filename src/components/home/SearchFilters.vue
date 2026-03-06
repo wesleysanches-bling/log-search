@@ -18,6 +18,7 @@
 
   const emit = defineEmits<{
     search: [filters: ISearchFilters];
+    save: [filters: ISearchFilters];
   }>();
 
   const dateRange = ref<Date[]>([]);
@@ -33,8 +34,8 @@
     value: action,
   }));
 
-  function handleSearch() {
-    if (dateRange.value.length < 2) return;
+  function buildFilters(): ISearchFilters | null {
+    if (dateRange.value.length < 2) return null;
 
     const filters: ISearchFilters = {
       startDate: getStartOfDay(dateRange.value[0]),
@@ -58,7 +59,19 @@
       filters.freeText = freeText.value.trim();
     }
 
+    return filters;
+  }
+
+  function handleSearch() {
+    const filters = buildFilters();
+    if (!filters) return;
     emit('search', filters);
+  }
+
+  function handleSave() {
+    const filters = buildFilters();
+    if (!filters) return;
+    emit('save', filters);
   }
 
   function handleClear() {
@@ -69,6 +82,29 @@
     transaction.value = '';
     freeText.value = '';
   }
+
+  function loadFilters(filters: ISearchFilters) {
+    dateRange.value = [new Date(filters.startDate), new Date(filters.endDate)];
+    userIdentifier.value = filters.userIdentifier || '';
+    transaction.value = filters.transaction || '';
+    freeText.value = filters.freeText || '';
+
+    if (filters.action) {
+      const isInList = COMMON_ACTIONS.includes(filters.action as (typeof COMMON_ACTIONS)[number]);
+      if (isInList) {
+        useCustomAction.value = false;
+        selectedAction.value = filters.action;
+      } else {
+        useCustomAction.value = true;
+        customAction.value = filters.action;
+      }
+    } else {
+      selectedAction.value = null;
+      customAction.value = '';
+    }
+  }
+
+  defineExpose({ loadFilters });
 </script>
 
 <template>
@@ -169,13 +205,21 @@
         @click="handleSearch"
       />
       <Button
+        label="Salvar Filtro"
+        icon="pi pi-bookmark"
+        severity="secondary"
+        outlined
+        :disabled="dateRange.length < 2"
+        @click="handleSave"
+      />
+      <Button
         label="Limpar"
         icon="pi pi-times"
         severity="secondary"
-        outlined
+        text
         @click="handleClear"
       />
-      <span v-if="!isConnected" class="text-sm text-amber-600">
+      <span v-if="!isConnected" class="ml-auto text-sm text-amber-600">
         <i class="pi pi-info-circle mr-1" />
         Conecte-se primeiro para buscar
       </span>

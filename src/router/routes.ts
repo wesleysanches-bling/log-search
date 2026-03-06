@@ -10,4 +10,12 @@ export const routes: RouteRecordRaw[] = [
       title: 'OpenSearch Tool - Busca de Logs',
     },
   },
+  {
+    path: PATHS.SAVED_FILTERS,
+    name: ROUTES.SAVED_FILTERS,
+    component: () => import('@/views/SavedFiltersView.vue'),
+    meta: {
+      title: 'OpenSearch Tool - Filtros Salvos',
+    },
+  },
 ];

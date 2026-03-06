@@ -37,6 +37,11 @@ export const useCredentialsStore = defineStore('credentials', {
   },
 
   persist: {
-    pick: ['username'],
+    afterHydrate(ctx) {
+      const state = ctx.store.$state as ICredentialsState;
+      if (state.isAuthenticated && state.username && state.password) {
+        openSearchClient.setAuthHeader(state.username, state.password);
+      }
+    },
   },
 });

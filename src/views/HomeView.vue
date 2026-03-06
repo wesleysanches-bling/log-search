@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { ref } from 'vue';
+  import { ref, onMounted } from 'vue';
+  import { useRoute } from 'vue-router';
   import { useToast } from 'primevue/usetoast';
 
   import VpnAlert from '@/components/common/VpnAlert.vue';
@@ -7,24 +8,40 @@
   import SearchFilters from '@/components/home/SearchFilters.vue';
   import ResultsTable from '@/components/home/ResultsTable.vue';
   import LogDetailModal from '@/components/home/LogDetailModal.vue';
+  import SaveFilterDialog from '@/components/home/SaveFilterDialog.vue';
 
   import { useSearchLogs } from '@/composables';
   import { useCredentialsStore } from '@/stores/credentials-store';
+  import { useSavedFiltersStore } from '@/stores/saved-filters-store';
 
-  import type { ISearchFilters } from '@/types/opensearch-types';
-  import type { ILogEntryParsed } from '@/types/opensearch-types';
+  import type {
+    ISearchFilters,
+    ILogEntryParsed,
+    IOpenSearchResponse,
+  } from '@/types/opensearch-types';
 
+  const route = useRoute();
   const toast = useToast();
   const credentialsStore = useCredentialsStore();
+  const savedFiltersStore = useSavedFiltersStore();
 
-  const { searchLogs, isSearching, parsedResults, totalHits, searchDuration } = useSearchLogs();
+  const { searchLogs, isSearching, parsedResults, totalHits, searchDuration, loadSavedResults, clearLoaded } =
+    useSearchLogs();
 
   const selectedLog = ref<ILogEntryParsed | null>(null);
   const showDetailModal = ref(false);
 
+  const showSaveDialog = ref(false);
+  const filtersToSave = ref<ISearchFilters | null>(null);
+  const lastSearchResults = ref<IOpenSearchResponse | null>(null);
+
+  const searchFiltersRef = ref<InstanceType<typeof SearchFilters> | null>(null);
+
   async function handleSearch(filters: ISearchFilters) {
     try {
-      await searchLogs(filters);
+      clearLoaded();
+      const response = await searchLogs(filters);
+      lastSearchResults.value = response ?? null;
       toast.add({
         severity: 'success',
         summary: 'Busca concluída',
@@ -54,6 +71,42 @@
       life: 2000,
     });
   }
+
+  function handleSaveRequest(filters: ISearchFilters) {
+    filtersToSave.value = filters;
+    showSaveDialog.value = true;
+  }
+
+  function handleFilterSaved() {
+    toast.add({
+      severity: 'success',
+      summary: 'Filtro salvo',
+      detail: 'Filtro salvo com sucesso. Acesse "Filtros Salvos" para gerenciar.',
+      life: 3000,
+    });
+  }
+
+  onMounted(() => {
+    const filterId = route.query.filterId as string;
+    if (filterId) {
+      const saved = savedFiltersStore.filters.find((f) => f.id === filterId);
+      if (saved) {
+        if (searchFiltersRef.value) {
+          searchFiltersRef.value.loadFilters(saved.filters);
+        }
+        if (saved.results) {
+          loadSavedResults(saved.results);
+          lastSearchResults.value = saved.results;
+          toast.add({
+            severity: 'info',
+            summary: 'Dados carregados',
+            detail: `${saved.totalHits ?? 0} registros carregados do filtro "${saved.name}".`,
+            life: 3000,
+          });
+        }
+      }
+    }
+  });
 </script>
 
 <template>
@@ -63,9 +116,11 @@
     <CredentialsPanel @connected="handleConnected" />
 
     <SearchFilters
+      ref="searchFiltersRef"
       :is-searching="isSearching"
       :is-connected="credentialsStore.isAuthenticated"
       @search="handleSearch"
+      @save="handleSaveRequest"
     />
 
     <ResultsTable
@@ -77,5 +132,12 @@
     />
 
     <LogDetailModal v-model:visible="showDetailModal" :log="selectedLog" />
+
+    <SaveFilterDialog
+      v-model:visible="showSaveDialog"
+      :filters="filtersToSave"
+      :results="lastSearchResults"
+      @saved="handleFilterSaved"
+    />
   </div>
 </template>

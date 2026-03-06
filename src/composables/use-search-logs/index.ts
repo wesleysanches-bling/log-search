@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/vue-query';
-import { computed } from 'vue';
+import { ref, computed } from 'vue';
 
 import { OpenSearchService } from '@/services/opensearch';
 
@@ -31,10 +31,14 @@ export function useSearchLogs() {
     },
   });
 
-  const parsedResults = computed<ILogEntryParsed[]>(() => {
-    if (!searchResult.value?.hits?.hits) return [];
+  const loadedResult = ref<IOpenSearchResponse | null>(null);
 
-    return searchResult.value.hits.hits.map((hit) => ({
+  const activeResult = computed(() => loadedResult.value ?? searchResult.value ?? null);
+
+  const parsedResults = computed<ILogEntryParsed[]>(() => {
+    if (!activeResult.value?.hits?.hits) return [];
+
+    return activeResult.value.hits.hits.map((hit) => ({
       _id: hit._id,
       ...hit._source,
       dataParsed: hit._source.data ? parseLogData(hit._source.data) : null,
@@ -42,12 +46,20 @@ export function useSearchLogs() {
   });
 
   const totalHits = computed(() => {
-    return searchResult.value?.hits?.total?.value ?? 0;
+    return activeResult.value?.hits?.total?.value ?? 0;
   });
 
   const searchDuration = computed(() => {
-    return searchResult.value?.took ?? 0;
+    return activeResult.value?.took ?? 0;
   });
+
+  function loadSavedResults(response: IOpenSearchResponse) {
+    loadedResult.value = response;
+  }
+
+  function clearLoaded() {
+    loadedResult.value = null;
+  }
 
   return {
     searchResult,
@@ -58,5 +70,7 @@ export function useSearchLogs() {
     parsedResults,
     totalHits,
     searchDuration,
+    loadSavedResults,
+    clearLoaded,
   };
 }
