@@ -2,9 +2,10 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { storagePlugin } from './vite-plugin-storage';
+import { insightsPlugin } from './vite-plugin-insights';
 
 export default defineConfig({
-  plugins: [vue(), storagePlugin()],
+  plugins: [vue(), storagePlugin(), insightsPlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

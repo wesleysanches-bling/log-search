@@ -9,6 +9,7 @@
   import ResultsTable from '@/components/home/ResultsTable.vue';
   import LogDetailModal from '@/components/home/LogDetailModal.vue';
   import SaveFilterDialog from '@/components/home/SaveFilterDialog.vue';
+  import InsightsPanel from '@/components/home/InsightsPanel.vue';
 
   import { useSearchLogs } from '@/composables';
   import { useCredentialsStore } from '@/stores/credentials-store';
@@ -36,10 +37,12 @@
   const lastSearchResults = ref<IOpenSearchResponse | null>(null);
 
   const searchFiltersRef = ref<InstanceType<typeof SearchFilters> | null>(null);
+  const lastFilters = ref<ISearchFilters | null>(null);
 
   async function handleSearch(filters: ISearchFilters) {
     try {
       clearLoaded();
+      lastFilters.value = { ...filters };
       const response = await searchLogs(filters);
       lastSearchResults.value = response ?? null;
       toast.add({
@@ -86,11 +89,20 @@
     });
   }
 
+  function handleApplyInsightFilter(filters: Partial<ISearchFilters>) {
+    if (searchFiltersRef.value && lastFilters.value) {
+      const merged = { ...lastFilters.value, ...filters };
+      searchFiltersRef.value.loadFilters(merged);
+      handleSearch(merged);
+    }
+  }
+
   onMounted(() => {
     const filterId = route.query.filterId as string;
     if (filterId) {
       const saved = savedFiltersStore.filters.find((f) => f.id === filterId);
       if (saved) {
+        lastFilters.value = { ...saved.filters };
         if (searchFiltersRef.value) {
           searchFiltersRef.value.loadFilters(saved.filters);
         }
@@ -121,6 +133,12 @@
       :is-connected="credentialsStore.isAuthenticated"
       @search="handleSearch"
       @save="handleSaveRequest"
+    />
+
+    <InsightsPanel
+      :results="lastSearchResults"
+      :filters="lastFilters"
+      @apply-filter="handleApplyInsightFilter"
     />
 
     <ResultsTable
