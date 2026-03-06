@@ -52,6 +52,19 @@
               severity="secondary"
             />
           </RouterLink>
+
+          <RouterLink
+            to="/biblioteca"
+            class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+            :class="
+              route.name === 'libraries'
+                ? 'bg-primary-50 text-primary-700'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            "
+          >
+            <i class="pi pi-book text-xs" />
+            Biblioteca
+          </RouterLink>
         </nav>
       </div>
     </header>

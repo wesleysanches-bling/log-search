@@ -3,9 +3,10 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { storagePlugin } from './vite-plugin-storage';
 import { insightsPlugin } from './vite-plugin-insights';
+import { librariesPlugin } from './vite-plugin-libraries';
 
 export default defineConfig({
-  plugins: [vue(), storagePlugin(), insightsPlugin()],
+  plugins: [vue(), storagePlugin(), insightsPlugin(), librariesPlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

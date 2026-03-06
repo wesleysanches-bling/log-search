@@ -1,6 +1,7 @@
 import { loadEnv } from 'vite';
 import type { Plugin } from 'vite';
 import path from 'node:path';
+import { searchVectorStore } from './vite-plugin-libraries';
 
 const SYSTEM_PROMPT = `Você é um Analista de Logs Sênior e Engenheiro de Confiabilidade (SRE) especializado em sistemas de e-commerce e integrações com marketplaces/fintechs.
 
@@ -67,6 +68,35 @@ interface ConversationMessage {
 
 const conversationStore = new Map<string, ConversationMessage[]>();
 
+function buildRagQuery(summary: Record<string, unknown>): string {
+  const parts: string[] = [];
+
+  const actions = summary.actionDistribution as Record<string, number> | undefined;
+  if (actions) {
+    const topActions = Object.entries(actions)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([action]) => action);
+    parts.push(...topActions);
+  }
+
+  const integrations = summary.integrations as Array<{ destiny: string; httpCode: number }> | undefined;
+  if (integrations) {
+    for (const intg of integrations.slice(0, 3)) {
+      parts.push(`${intg.destiny} HTTP ${intg.httpCode}`);
+    }
+  }
+
+  const errors = summary.errors as Array<{ message: string }> | undefined;
+  if (errors) {
+    for (const err of errors.slice(0, 3)) {
+      parts.push(err.message);
+    }
+  }
+
+  return parts.join(' ') || 'logs de integração erros API';
+}
+
 export function insightsPlugin(): Plugin {
   let geminiApiKey: string | undefined;
   let geminiModel: string;
@@ -111,7 +141,30 @@ export function insightsPlugin(): Plugin {
               maxOutputTokens: 4096,
             });
 
-            const userPrompt = `Analise o seguinte resumo estatístico de logs de integração e forneça insights:\n\n${JSON.stringify(summary, null, 2)}`;
+            const summaryText = JSON.stringify(summary, null, 2);
+
+            let ragContext = '';
+            try {
+              const searchQuery = buildRagQuery(summary);
+              console.log('[insights-plugin] [RAG] Query de busca:', searchQuery);
+              const relevantDocs = await searchVectorStore(searchQuery, 5);
+              console.log(`[insights-plugin] [RAG] ${relevantDocs.length} chunks encontrados`);
+              if (relevantDocs.length > 0) {
+                for (const doc of relevantDocs) {
+                  console.log(`[insights-plugin] [RAG]   - ${doc.source} (score: ${(doc.score * 100).toFixed(1)}%) | "${doc.content.substring(0, 80)}..."`);
+                }
+                const docsText = relevantDocs
+                  .map((d, i) => `[${i + 1}] (fonte: ${d.source}, relevância: ${(d.score * 100).toFixed(0)}%)\n${d.content}`)
+                  .join('\n---\n');
+                ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA (encontrada automaticamente na biblioteca):\n---\n${docsText}\n---\n\nUse essa documentação para enriquecer sua análise quando relevante. Cite a fonte quando usar informações dela.`;
+              } else {
+                console.log('[insights-plugin] [RAG] Nenhum chunk encontrado. Vector store pode estar vazio ou não inicializado.');
+              }
+            } catch (ragError) {
+              console.error('[insights-plugin] [RAG] Erro na busca vetorial:', ragError);
+            }
+
+            const userPrompt = `Analise o seguinte resumo estatístico de logs de integração e forneça insights:${ragContext}\n\nRESUMO ESTATÍSTICO DOS LOGS:\n${summaryText}`;
 
             const messages = [
               new SystemMessage(SYSTEM_PROMPT),

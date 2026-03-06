@@ -18,4 +18,12 @@ export const routes: RouteRecordRaw[] = [
       title: 'OpenSearch Tool - Filtros Salvos',
     },
   },
+  {
+    path: PATHS.LIBRARIES,
+    name: ROUTES.LIBRARIES,
+    component: () => import('@/views/LibrariesView.vue'),
+    meta: {
+      title: 'OpenSearch Tool - Biblioteca',
+    },
+  },
 ];
