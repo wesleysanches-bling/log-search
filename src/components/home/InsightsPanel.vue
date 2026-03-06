@@ -3,7 +3,8 @@
   import Button from 'primevue/button';
   import InputText from 'primevue/inputtext';
 
-  import { useInsights, type IInsightResult, type ISuggestedFilter } from '@/composables/use-insights';
+  import { useInsights } from '@/composables/use-insights';
+  import type { ISuggestedFilter } from '@/types/insights-types';
   import type { IOpenSearchResponse, ISearchFilters } from '@/types/opensearch-types';
 
   const props = defineProps<{

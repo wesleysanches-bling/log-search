@@ -1,46 +1,10 @@
 import { ref, computed } from 'vue';
-import type { IOpenSearchResponse, ISearchFilters } from '@/types/opensearch-types';
+
+import { InsightsService } from '@/services/insights';
 import { summarizeLogs, type ILogSummary } from '@/utils/log-summarizer';
 
-export interface IInsightPattern {
-  title: string;
-  description: string;
-  impact: 'low' | 'medium' | 'high';
-}
-
-export interface IInsightAlert {
-  level: 'info' | 'warning' | 'critical';
-  message: string;
-}
-
-export interface IInsightRecommendation {
-  action: string;
-  priority: 'low' | 'medium' | 'high';
-}
-
-export interface ISuggestedFilter {
-  label: string;
-  filters: {
-    action?: string;
-    freeText?: string;
-  };
-}
-
-export interface IInsightResult {
-  severity: 'info' | 'warning' | 'critical';
-  summary: string;
-  patterns: IInsightPattern[];
-  alerts: IInsightAlert[];
-  recommendations: IInsightRecommendation[];
-  rootCauseAnalysis: string;
-  suggestedFilters: ISuggestedFilter[];
-}
-
-export interface IChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-}
+import type { IOpenSearchResponse, ISearchFilters } from '@/types/opensearch-types';
+import type { IInsightResult, IChatMessage } from '@/types/insights-types';
 
 export function useInsights() {
   const isAnalyzing = ref(false);
@@ -55,49 +19,6 @@ export function useInsights() {
 
   const hasInsight = computed(() => insight.value !== null);
   const hasError = computed(() => error.value !== null);
-
-  async function readSSEStream(
-    response: Response,
-    onChunk: (text: string) => void,
-  ): Promise<{ fullText: string; sessionId?: string }> {
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Stream não disponível');
-
-    const decoder = new TextDecoder();
-    let fullText = '';
-    let sid: string | undefined;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const text = decoder.decode(value, { stream: true });
-      const lines = text.split('\n');
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr) continue;
-
-        try {
-          const event = JSON.parse(jsonStr);
-          if (event.type === 'chunk' && event.content) {
-            fullText += event.content;
-            onChunk(event.content);
-          } else if (event.type === 'done') {
-            sid = event.sessionId;
-          } else if (event.type === 'error') {
-            throw new Error(event.content);
-          }
-        } catch (e) {
-          if (e instanceof SyntaxError) continue;
-          throw e;
-        }
-      }
-    }
-
-    return { fullText, sessionId: sid };
-  }
 
   function parseInsightJson(raw: string): IInsightResult {
     let cleaned = raw.trim();
@@ -121,25 +42,15 @@ export function useInsights() {
       const summary = summarizeLogs(response, filters);
       logSummary.value = summary;
 
-      const res = await fetch('/api/insights/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ summary }),
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
-        throw new Error(errBody.error || `HTTP ${res.status}`);
-      }
-
-      const { fullText, sessionId: sid } = await readSSEStream(res, (chunk) => {
+      const { fullText, sessionId: sid } = await InsightsService.analyze(summary, (chunk) => {
         streamingText.value += chunk;
       });
 
-      sessionId.value = sid || null;
+      sessionId.value = sid;
       insight.value = parseInsightJson(fullText);
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value =
+        e instanceof Error ? e.message : ((e as { message?: string })?.message ?? String(e));
     } finally {
       isAnalyzing.value = false;
     }
@@ -158,21 +69,7 @@ export function useInsights() {
     });
 
     try {
-      const res = await fetch('/api/insights/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionId.value,
-          question,
-        }),
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
-        throw new Error(errBody.error || `HTTP ${res.status}`);
-      }
-
-      const { fullText } = await readSSEStream(res, (chunk) => {
+      const fullText = await InsightsService.chat(sessionId.value, question, (chunk) => {
         chatStreamingText.value += chunk;
       });
 
@@ -182,9 +79,11 @@ export function useInsights() {
         timestamp: new Date().toISOString(),
       });
     } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : ((e as { message?: string })?.message ?? String(e));
       chatMessages.value.push({
         role: 'assistant',
-        content: `Erro: ${e instanceof Error ? e.message : String(e)}`,
+        content: `Erro: ${msg}`,
         timestamp: new Date().toISOString(),
       });
     } finally {

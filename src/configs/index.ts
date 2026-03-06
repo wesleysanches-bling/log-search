@@ -1,1 +1,1 @@
-export { HttpOpenSearch, openSearchClient } from '@/configs/http';
+export { HttpOpenSearch, openSearchClient, HttpInsights, insightsClient } from '@/configs/http';
