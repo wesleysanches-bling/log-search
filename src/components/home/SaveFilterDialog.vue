@@ -6,12 +6,18 @@
 
   import { useSavedFiltersStore } from '@/stores/saved-filters-store';
 
-  import type { ISearchFilters, IOpenSearchResponse } from '@/types/opensearch-types';
+  import type {
+    ISearchFilters,
+    IOpenSearchResponse,
+    ISavedFilterTag,
+  } from '@/types/opensearch-types';
+  import type { IInsightResult } from '@/types/insights-types';
 
   const props = defineProps<{
     visible: boolean;
     filters: ISearchFilters | null;
     results: IOpenSearchResponse | null;
+    insights: IInsightResult | null;
   }>();
 
   const emit = defineEmits<{
@@ -21,13 +27,34 @@
 
   const savedFiltersStore = useSavedFiltersStore();
   const filterName = ref('');
+  const tags = ref<ISavedFilterTag[]>([]);
+  const newTagKey = ref('');
+  const newTagValue = ref('');
 
   watch(
     () => props.visible,
     (val) => {
-      if (val) filterName.value = '';
+      if (val) {
+        filterName.value = '';
+        tags.value = [];
+        newTagKey.value = '';
+        newTagValue.value = '';
+      }
     },
   );
+
+  function handleAddTag() {
+    const key = newTagKey.value.trim();
+    const value = newTagValue.value.trim();
+    if (!key || !value) return;
+    tags.value.push({ key, value });
+    newTagKey.value = '';
+    newTagValue.value = '';
+  }
+
+  function handleRemoveTag(index: number) {
+    tags.value.splice(index, 1);
+  }
 
   function handleSave() {
     if (!filterName.value.trim() || !props.filters) return;
@@ -35,6 +62,8 @@
       filterName.value.trim(),
       props.filters,
       props.results ?? undefined,
+      props.insights ?? undefined,
+      tags.value.length > 0 ? [...tags.value] : undefined,
     );
     emit('saved');
     emit('update:visible', false);
@@ -54,6 +83,8 @@
     if (filters.freeText) parts.push(`Busca livre: ${filters.freeText}`);
     return parts;
   }
+
+  const tagSuggestions = ['Jira', 'Ticket', 'Sprint', 'Responsável', 'Descrição', 'Prioridade'];
 </script>
 
 <template>
@@ -61,7 +92,7 @@
     :visible="visible"
     modal
     header="Salvar Filtro"
-    :style="{ width: '480px' }"
+    :style="{ width: '540px' }"
     @update:visible="emit('update:visible', $event)"
   >
     <div class="space-y-4">
@@ -110,6 +141,77 @@
           Nenhum resultado de busca disponível. Execute uma busca antes de salvar
           para incluir os dados.
         </p>
+      </div>
+
+      <!-- Insights indicator -->
+      <div v-if="insights" class="rounded-md border border-violet-100 bg-violet-50 p-3">
+        <span class="block text-xs font-medium uppercase text-violet-600">
+          Insights da IA incluídos
+        </span>
+        <p class="mt-1 text-sm text-violet-700">
+          <i class="pi pi-sparkles mr-1" />
+          A análise da IA ({{ insights.severity }}) será salva junto com o filtro.
+        </p>
+      </div>
+
+      <!-- Tags / Metadata -->
+      <div class="rounded-md border border-slate-200 bg-white p-3">
+        <span class="mb-2 block text-xs font-medium uppercase text-slate-400">
+          Informações adicionais (opcional)
+        </span>
+
+        <div v-if="tags.length" class="mb-3 space-y-1.5">
+          <div
+            v-for="(tag, idx) in tags"
+            :key="idx"
+            class="flex items-center gap-2 rounded bg-slate-50 px-2.5 py-1.5"
+          >
+            <span class="text-xs font-semibold text-slate-500">{{ tag.key }}:</span>
+            <span class="flex-1 text-sm text-slate-700">{{ tag.value }}</span>
+            <button
+              class="text-slate-300 transition-colors hover:text-red-500"
+              @click="handleRemoveTag(idx)"
+            >
+              <i class="pi pi-times text-xs" />
+            </button>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <InputText
+            v-model="newTagKey"
+            placeholder="Chave (ex: Jira)"
+            class="w-1/3 text-sm"
+            size="small"
+            :suggestions="tagSuggestions"
+          />
+          <InputText
+            v-model="newTagValue"
+            placeholder="Valor (ex: PROJ-1234)"
+            class="flex-1 text-sm"
+            size="small"
+            @keyup.enter="handleAddTag"
+          />
+          <Button
+            icon="pi pi-plus"
+            size="small"
+            severity="secondary"
+            outlined
+            :disabled="!newTagKey.trim() || !newTagValue.trim()"
+            @click="handleAddTag"
+          />
+        </div>
+
+        <div v-if="!tags.length" class="mt-2 flex flex-wrap gap-1">
+          <button
+            v-for="suggestion in tagSuggestions"
+            :key="suggestion"
+            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-600"
+            @click="newTagKey = suggestion"
+          >
+            {{ suggestion }}
+          </button>
+        </div>
       </div>
     </div>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, onMounted } from 'vue';
+  import { ref, computed, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
   import { useToast } from 'primevue/usetoast';
 
@@ -20,6 +20,7 @@
     ILogEntryParsed,
     IOpenSearchResponse,
   } from '@/types/opensearch-types';
+  import type { IInsightResult } from '@/types/insights-types';
 
   const route = useRoute();
   const toast = useToast();
@@ -37,7 +38,13 @@
   const lastSearchResults = ref<IOpenSearchResponse | null>(null);
 
   const searchFiltersRef = ref<InstanceType<typeof SearchFilters> | null>(null);
+  const insightsPanelRef = ref<InstanceType<typeof InsightsPanel> | null>(null);
   const lastFilters = ref<ISearchFilters | null>(null);
+  const savedInsight = ref<IInsightResult | null>(null);
+
+  const currentInsight = computed(() => {
+    return insightsPanelRef.value?.insight ?? null;
+  });
 
   async function handleSearch(filters: ISearchFilters) {
     try {
@@ -116,6 +123,9 @@
             life: 3000,
           });
         }
+        if (saved.insights) {
+          savedInsight.value = saved.insights;
+        }
       }
     }
   });
@@ -136,8 +146,10 @@
     />
 
     <InsightsPanel
+      ref="insightsPanelRef"
       :results="lastSearchResults"
       :filters="lastFilters"
+      :saved-insight="savedInsight"
       @apply-filter="handleApplyInsightFilter"
     />
 
@@ -155,6 +167,7 @@
       v-model:visible="showSaveDialog"
       :filters="filtersToSave"
       :results="lastSearchResults"
+      :insights="currentInsight"
       @saved="handleFilterSaved"
     />
   </div>

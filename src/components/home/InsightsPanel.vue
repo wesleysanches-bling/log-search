@@ -4,12 +4,13 @@
   import InputText from 'primevue/inputtext';
 
   import { useInsights } from '@/composables/use-insights';
-  import type { ISuggestedFilter } from '@/types/insights-types';
+  import type { ISuggestedFilter, IInsightResult } from '@/types/insights-types';
   import type { IOpenSearchResponse, ISearchFilters } from '@/types/opensearch-types';
 
   const props = defineProps<{
     results: IOpenSearchResponse | null;
     filters: ISearchFilters | null;
+    savedInsight?: IInsightResult | null;
   }>();
 
   const emit = defineEmits<{
@@ -36,6 +37,19 @@
   const chatInput = ref('');
   const chatContainer = ref<HTMLElement | null>(null);
   const isExpanded = ref(false);
+
+  watch(
+    () => props.savedInsight,
+    (saved) => {
+      if (saved) {
+        insight.value = saved;
+        isExpanded.value = true;
+      }
+    },
+    { immediate: true },
+  );
+
+  defineExpose({ insight });
 
   const canAnalyze = computed(() => {
     return props.results && props.results.hits?.hits?.length > 0 && props.filters;

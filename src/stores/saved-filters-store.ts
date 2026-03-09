@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
 
-import type { ISearchFilters, ISavedFilter, IOpenSearchResponse } from '@/types/opensearch-types';
+import type {
+  ISearchFilters,
+  ISavedFilter,
+  ISavedFilterTag,
+  IOpenSearchResponse,
+} from '@/types/opensearch-types';
+import type { IInsightResult } from '@/types/insights-types';
 
 interface ISavedFiltersState {
   filters: ISavedFilter[];
@@ -58,6 +64,8 @@ export const useSavedFiltersStore = defineStore('saved-filters', {
       name: string,
       filters: ISearchFilters,
       results?: IOpenSearchResponse,
+      insights?: IInsightResult,
+      tags?: ISavedFilterTag[],
     ): Promise<ISavedFilter> {
       const now = new Date().toISOString();
       const saved: ISavedFilter = {
@@ -65,6 +73,8 @@ export const useSavedFiltersStore = defineStore('saved-filters', {
         name,
         filters: { ...filters },
         results,
+        insights,
+        tags,
         totalHits: results?.hits?.total?.value,
         searchDuration: results?.took,
         createdAt: now,

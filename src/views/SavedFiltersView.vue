@@ -231,6 +231,29 @@
               >
                 {{ tag }}
               </span>
+              <span
+                v-if="filter.insights"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                :class="{
+                  'bg-blue-50 text-blue-700': filter.insights.severity === 'info',
+                  'bg-amber-50 text-amber-700': filter.insights.severity === 'warning',
+                  'bg-red-50 text-red-700': filter.insights.severity === 'critical',
+                }"
+              >
+                <i class="pi pi-sparkles text-[10px]" />
+                Insight IA
+              </span>
+            </div>
+
+            <div v-if="filter.tags?.length" class="mt-2 flex flex-wrap gap-1.5">
+              <span
+                v-for="(tag, idx) in filter.tags"
+                :key="`meta-${idx}`"
+                class="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700"
+              >
+                <span class="font-semibold">{{ tag.key }}:</span>
+                {{ tag.value }}
+              </span>
             </div>
 
             <div class="mt-2 flex gap-4 text-xs text-slate-400">

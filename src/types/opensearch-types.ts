@@ -1,3 +1,5 @@
+import type { IInsightResult } from '@/types/insights-types';
+
 export interface IOpenSearchCredentials {
   username: string;
   password: string;
@@ -81,11 +83,18 @@ export interface ILogEntryParsed extends Omit<ILogEntry, 'data'> {
   dataParsed: Record<string, unknown> | null;
 }
 
+export interface ISavedFilterTag {
+  key: string;
+  value: string;
+}
+
 export interface ISavedFilter {
   id: string;
   name: string;
   filters: ISearchFilters;
   results?: IOpenSearchResponse;
+  insights?: IInsightResult;
+  tags?: ISavedFilterTag[];
   totalHits?: number;
   searchDuration?: number;
   createdAt: string;
