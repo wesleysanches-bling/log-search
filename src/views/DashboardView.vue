@@ -48,8 +48,12 @@
 
   const timelineCanvas = ref<HTMLCanvasElement | null>(null);
   const statusCanvas = ref<HTMLCanvasElement | null>(null);
+  const errorsBarCanvas = ref<HTMLCanvasElement | null>(null);
+  const httpCodeCanvas = ref<HTMLCanvasElement | null>(null);
   let timelineChart: Chart | null = null;
   let statusChart: Chart | null = null;
+  let errorsBarChart: Chart | null = null;
+  let httpCodeChart: Chart | null = null;
 
   const savedFiltersWithResults = computed(() => {
     return savedFiltersStore.sortedFilters.filter((f) => f.results?.hits?.hits?.length);
@@ -124,12 +128,74 @@
     };
   });
 
-  const sortedErrors = computed(() => {
-    if (!summary.value) return [];
-    return Object.entries(summary.value.errorsByType)
-      .map(([type, count]) => ({ type, count }))
-      .sort((a, b) => b.count - a.count);
+  const errorsBarChartData = computed(() => {
+    if (!summary.value) return null;
+    const details = summary.value.errorDetails;
+    if (details.length === 0) return null;
+
+    const top = details.slice(0, 10);
+    return {
+      labels: top.map((d) => truncateLabel(d.type, 40)),
+      datasets: [
+        {
+          label: 'Ocorrências',
+          data: top.map((d) => d.count),
+          backgroundColor: top.map((_, i) => ERROR_COLORS[i % ERROR_COLORS.length]),
+          borderRadius: 4,
+          barThickness: 22,
+        },
+      ],
+    };
   });
+
+  const httpCodeChartData = computed(() => {
+    if (!summary.value) return null;
+    const codes = summary.value.errorsByHttpCode;
+    const entries = Object.entries(codes).sort(
+      ([, a], [, b]) => (b as number) - (a as number),
+    );
+    if (entries.length === 0) return null;
+
+    return {
+      labels: entries.map(([code]) => `HTTP ${code}`),
+      datasets: [
+        {
+          data: entries.map(([, count]) => count),
+          backgroundColor: entries.map(([code]) => {
+            const c = Number(code);
+            if (c >= 500) return '#991b1b';
+            if (c >= 400) return '#dc2626';
+            if (c >= 300) return '#f59e0b';
+            return '#6b7280';
+          }),
+        },
+      ],
+    };
+  });
+
+  const sortedCompanies = computed(() => {
+    if (!summary.value) return [];
+    return Object.entries(summary.value.byCompany)
+      .map(([id, data]) => ({ id, ...data }))
+      .filter((c) => c.errors > 0)
+      .sort((a, b) => b.errorRate - a.errorRate);
+  });
+
+  const ERROR_COLORS = [
+    '#ef4444', '#f97316', '#eab308', '#a855f7', '#ec4899',
+    '#6366f1', '#14b8a6', '#64748b', '#be185d', '#0d9488',
+  ];
+
+  function truncateLabel(label: string, maxLen: number): string {
+    return label.length > maxLen ? label.slice(0, maxLen - 1) + '…' : label;
+  }
+
+  function getHttpSeverity(code: number | null): 'danger' | 'warn' | 'secondary' {
+    if (!code) return 'secondary';
+    if (code >= 500) return 'danger';
+    if (code >= 400) return 'warn';
+    return 'secondary';
+  }
 
   watch(
     timelineChartData,
@@ -144,7 +210,9 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: data.datasets.length > 1, position: 'top' } },
+          plugins: {
+            legend: { display: data.datasets.length > 1, position: 'top' },
+          },
           scales: {
             x: { grid: { display: false } },
             y: { beginAtZero: true },
@@ -177,9 +245,68 @@
     { deep: true },
   );
 
+  watch(
+    errorsBarChartData,
+    async (data) => {
+      await nextTick();
+      if (!errorsBarCanvas.value || !data) return;
+      if (errorsBarChart) errorsBarChart.destroy();
+
+      errorsBarChart = new Chart(errorsBarCanvas.value, {
+        type: 'bar',
+        data,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => ` ${ctx.parsed.x} ocorrências`,
+              },
+            },
+          },
+          scales: {
+            x: { beginAtZero: true, grid: { display: false } },
+            y: {
+              grid: { display: false },
+              ticks: { font: { size: 11, family: 'monospace' } },
+            },
+          },
+        },
+      });
+    },
+    { deep: true },
+  );
+
+  watch(
+    httpCodeChartData,
+    async (data) => {
+      await nextTick();
+      if (!httpCodeCanvas.value || !data) return;
+      if (httpCodeChart) httpCodeChart.destroy();
+
+      httpCodeChart = new Chart(httpCodeCanvas.value, {
+        type: 'doughnut',
+        data,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { padding: 12, font: { size: 11 } } },
+          },
+        },
+      });
+    },
+    { deep: true },
+  );
+
   onUnmounted(() => {
     if (timelineChart) timelineChart.destroy();
     if (statusChart) statusChart.destroy();
+    if (errorsBarChart) errorsBarChart.destroy();
+    if (httpCodeChart) httpCodeChart.destroy();
   });
 
   async function handleSearch(filters: ISearchFilters) {
@@ -555,7 +682,7 @@
       </div>
     </div>
 
-    <!-- Gráficos -->
+    <!-- Gráficos: Timeline + Status -->
     <div v-if="summary" class="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
         <h3 class="mb-3 text-sm font-semibold text-slate-700">Evolução Diária</h3>
@@ -569,7 +696,11 @@
 
       <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h3 class="mb-3 text-sm font-semibold text-slate-700">Distribuição por Status</h3>
-        <div v-if="statusChartData" class="flex items-center justify-center" style="height: 280px; position: relative">
+        <div
+          v-if="statusChartData"
+          class="flex items-center justify-center"
+          style="height: 280px; position: relative"
+        >
           <canvas ref="statusCanvas" />
         </div>
         <div v-else class="flex h-[280px] items-center justify-center text-sm text-slate-400">
@@ -578,38 +709,268 @@
       </div>
     </div>
 
-    <!-- Tabela de erros -->
-    <div v-if="summary && sortedErrors.length > 0" class="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div class="border-b border-slate-100 px-5 py-4">
-        <div class="flex items-center gap-2">
-          <i class="pi pi-exclamation-triangle text-red-500" />
-          <h3 class="text-sm font-semibold text-slate-700">Erros por Tipo</h3>
+    <!-- Gráficos: Erros por tipo (barras) + HTTP Codes (donut) -->
+    <div
+      v-if="summary && summary.errorDetails.length > 0"
+      class="grid grid-cols-1 gap-5 lg:grid-cols-3"
+    >
+      <div class="rounded-lg border border-red-200 bg-white p-5 shadow-sm lg:col-span-2">
+        <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-red-700">
+          <i class="pi pi-chart-bar text-xs" />
+          Distribuição de Erros por Tipo
+        </h3>
+        <div
+          v-if="errorsBarChartData"
+          :style="{ height: `${Math.max(180, summary.errorDetails.slice(0, 10).length * 36)}px`, position: 'relative' }"
+        >
+          <canvas ref="errorsBarCanvas" />
         </div>
       </div>
-      <DataTable :value="sortedErrors" striped-rows class="text-sm">
-        <Column field="type" header="Tipo de Erro" sortable style="min-width: 300px">
+
+      <div
+        v-if="httpCodeChartData"
+        class="rounded-lg border border-red-200 bg-white p-5 shadow-sm"
+      >
+        <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-red-700">
+          <i class="pi pi-server text-xs" />
+          Erros por HTTP Code
+        </h3>
+        <div class="flex items-center justify-center" style="height: 280px; position: relative">
+          <canvas ref="httpCodeCanvas" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabela detalhada de erros -->
+    <div
+      v-if="summary && summary.errorDetails.length > 0"
+      class="rounded-lg border border-red-200 bg-white shadow-sm"
+    >
+      <div class="border-b border-red-100 px-5 py-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i class="pi pi-exclamation-triangle text-red-500" />
+            <h3 class="text-sm font-semibold text-slate-700">Detalhamento de Erros</h3>
+            <span class="text-xs text-slate-400">
+              {{ summary.errorDetails.length }} tipo(s) de erro identificados
+            </span>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-red-500">
+            <i class="pi pi-info-circle" />
+            <span>
+              {{ summary.errorCount.toLocaleString('pt-BR') }} erros de
+              {{ summary.totalHits.toLocaleString('pt-BR') }} total
+              ({{ (100 - summary.successRate).toFixed(1) }}%)
+            </span>
+          </div>
+        </div>
+      </div>
+      <DataTable
+        :value="summary.errorDetails"
+        striped-rows
+        class="text-sm"
+        sort-field="count"
+        :sort-order="-1"
+      >
+        <Column field="type" header="Tipo de Erro" sortable style="min-width: 250px">
           <template #body="{ data }">
-            <span class="font-mono text-xs text-slate-700">{{ data.type }}</span>
-          </template>
-        </Column>
-        <Column field="count" header="Ocorrências" sortable style="width: 150px">
-          <template #body="{ data }">
-            <span class="font-semibold text-red-600">{{ data.count }}</span>
-          </template>
-        </Column>
-        <Column header="%" style="width: 200px">
-          <template #body="{ data }">
-            <div class="flex items-center gap-2">
-              <div class="h-2 flex-1 rounded-full bg-slate-100">
-                <div
-                  class="h-2 rounded-full bg-red-400"
-                  :style="{ width: `${Math.min((data.count / summary!.errorCount) * 100, 100)}%` }"
-                />
-              </div>
-              <span class="text-xs text-slate-500">
-                {{ Math.round((data.count / summary!.errorCount) * 100) }}%
+            <div class="flex flex-col gap-0.5">
+              <span class="font-mono text-xs font-medium text-slate-800">{{ data.type }}</span>
+              <span
+                v-if="data.affectedCompanies.length > 0"
+                class="text-[10px] text-slate-400"
+              >
+                {{ data.affectedCompanies.length }} empresa(s) afetada(s)
               </span>
             </div>
+          </template>
+        </Column>
+
+        <Column header="HTTP" sortable sort-field="primaryHttpCode" style="width: 100px">
+          <template #body="{ data }">
+            <div class="flex flex-wrap gap-1">
+              <Tag
+                v-for="(count, code) in data.httpCodes"
+                :key="code"
+                :value="`${code} (${count})`"
+                :severity="getHttpSeverity(Number(code))"
+                class="text-[10px]"
+              />
+              <span
+                v-if="Object.keys(data.httpCodes).length === 0"
+                class="text-xs text-slate-300"
+              >
+                —
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column
+          field="count"
+          header="Ocorrências"
+          sortable
+          style="width: 130px"
+        >
+          <template #body="{ data }">
+            <span class="text-base font-bold text-red-600">
+              {{ data.count.toLocaleString('pt-BR') }}
+            </span>
+          </template>
+        </Column>
+
+        <Column header="% dos Erros" sortable sort-field="percentOfErrors" style="width: 180px">
+          <template #body="{ data }">
+            <div class="flex items-center gap-2">
+              <div class="h-2.5 w-20 rounded-full bg-red-100">
+                <div
+                  class="h-2.5 rounded-full bg-red-500 transition-all"
+                  :style="{ width: `${Math.min(data.percentOfErrors, 100)}%` }"
+                />
+              </div>
+              <span class="min-w-[3rem] text-right text-xs font-medium text-red-600">
+                {{ data.percentOfErrors.toFixed(1) }}%
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="% do Total" sortable sort-field="percentOfTotal" style="width: 180px">
+          <template #body="{ data }">
+            <div class="flex items-center gap-2">
+              <div class="h-2.5 w-20 rounded-full bg-slate-100">
+                <div
+                  class="h-2.5 rounded-full bg-slate-500 transition-all"
+                  :style="{ width: `${Math.min(data.percentOfTotal * 2, 100)}%` }"
+                />
+              </div>
+              <span class="min-w-[3rem] text-right text-xs font-medium text-slate-600">
+                {{ data.percentOfTotal.toFixed(1) }}%
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Empresas Afetadas" style="min-width: 180px">
+          <template #body="{ data }">
+            <div v-if="data.affectedCompanies.length > 0" class="flex flex-wrap gap-1">
+              <Tag
+                v-for="company in data.affectedCompanies.slice(0, 4)"
+                :key="company"
+                :value="company"
+                severity="secondary"
+                class="text-[10px]"
+              />
+              <Tag
+                v-if="data.affectedCompanies.length > 4"
+                :value="`+${data.affectedCompanies.length - 4}`"
+                severity="info"
+                class="text-[10px]"
+              />
+            </div>
+            <span v-else class="text-xs text-slate-300">—</span>
+          </template>
+        </Column>
+      </DataTable>
+    </div>
+
+    <!-- Tabela de empresas com erros -->
+    <div
+      v-if="summary && sortedCompanies.length > 0"
+      class="rounded-lg border border-slate-200 bg-white shadow-sm"
+    >
+      <div class="border-b border-slate-100 px-5 py-4">
+        <div class="flex items-center gap-2">
+          <i class="pi pi-building text-slate-600" />
+          <h3 class="text-sm font-semibold text-slate-700">Empresas com Erros</h3>
+          <span class="text-xs text-slate-400">
+            {{ sortedCompanies.length }} de
+            {{ Object.keys(summary.byCompany).length }} empresa(s) com falhas
+          </span>
+        </div>
+      </div>
+      <DataTable
+        :value="sortedCompanies"
+        striped-rows
+        class="text-sm"
+        sort-field="errorRate"
+        :sort-order="-1"
+        :paginator="sortedCompanies.length > 15"
+        :rows="15"
+      >
+        <Column field="id" header="Identificador" sortable style="min-width: 180px">
+          <template #body="{ data }">
+            <span class="font-mono text-xs text-slate-700">{{ data.id }}</span>
+          </template>
+        </Column>
+
+        <Column field="total" header="Total" sortable style="width: 100px">
+          <template #body="{ data }">
+            <span class="text-sm text-slate-700">
+              {{ data.total.toLocaleString('pt-BR') }}
+            </span>
+          </template>
+        </Column>
+
+        <Column field="errors" header="Erros" sortable style="width: 100px">
+          <template #body="{ data }">
+            <span class="text-sm font-semibold text-red-600">
+              {{ data.errors.toLocaleString('pt-BR') }}
+            </span>
+          </template>
+        </Column>
+
+        <Column field="errorRate" header="Taxa de Erro" sortable style="width: 200px">
+          <template #body="{ data }">
+            <div class="flex items-center gap-2">
+              <div class="h-2.5 w-20 rounded-full bg-slate-100">
+                <div
+                  class="h-2.5 rounded-full transition-all"
+                  :class="
+                    data.errorRate > 50
+                      ? 'bg-red-500'
+                      : data.errorRate > 20
+                        ? 'bg-amber-500'
+                        : 'bg-yellow-400'
+                  "
+                  :style="{ width: `${Math.min(data.errorRate, 100)}%` }"
+                />
+              </div>
+              <span
+                class="min-w-[3.5rem] text-right text-xs font-medium"
+                :class="
+                  data.errorRate > 50
+                    ? 'text-red-600'
+                    : data.errorRate > 20
+                      ? 'text-amber-600'
+                      : 'text-yellow-600'
+                "
+              >
+                {{ data.errorRate.toFixed(1) }}%
+              </span>
+            </div>
+          </template>
+        </Column>
+
+        <Column header="Status" style="width: 120px">
+          <template #body="{ data }">
+            <Tag
+              :value="
+                data.errorRate > 50
+                  ? 'Crítico'
+                  : data.errorRate > 20
+                    ? 'Atenção'
+                    : 'Monitorar'
+              "
+              :severity="
+                data.errorRate > 50
+                  ? 'danger'
+                  : data.errorRate > 20
+                    ? 'warn'
+                    : 'secondary'
+              "
+              class="text-xs"
+            />
           </template>
         </Column>
       </DataTable>

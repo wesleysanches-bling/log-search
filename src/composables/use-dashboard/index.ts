@@ -2,6 +2,7 @@ import { ref, computed } from 'vue';
 import { useMutation } from '@tanstack/vue-query';
 
 import { OpenSearchService } from '@/services/opensearch';
+import { safeParseJson, extractErrorFromData } from '@/utils/log-summarizer';
 
 import type {
   ISearchFilters,
@@ -10,11 +11,47 @@ import type {
   IOpenSearchHit,
   ILogEntry,
   IDashboardSummary,
+  IErrorDetail,
   ISavedFilter,
 } from '@/types/opensearch-types';
 import type { IErrorResponse } from '@/types/common-types';
 
-function buildSummaryFromAggregations(aggregations: IOpenSearchAggregations): IDashboardSummary {
+function buildErrorDetails(
+  errorsByType: Record<string, number>,
+  errorCount: number,
+  totalHits: number,
+  errorHttpCodesMap: Record<string, Record<number, number>>,
+  errorCompaniesMap: Record<string, Set<string>>,
+): IErrorDetail[] {
+  return Object.entries(errorsByType)
+    .map(([type, count]) => {
+      const httpCodes = errorHttpCodesMap[type] ?? {};
+      const httpEntries = Object.entries(httpCodes).sort(
+        ([, a], [, b]) => (b as number) - (a as number),
+      );
+      const primaryHttpCode =
+        httpEntries.length > 0 ? Number(httpEntries[0][0]) : null;
+
+      return {
+        type,
+        count,
+        percentOfErrors:
+          errorCount > 0
+            ? Math.round((count / errorCount) * 10000) / 100
+            : 0,
+        percentOfTotal:
+          totalHits > 0 ? Math.round((count / totalHits) * 10000) / 100 : 0,
+        httpCodes,
+        primaryHttpCode,
+        affectedCompanies: [...(errorCompaniesMap[type] ?? [])],
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+}
+
+function buildSummaryFromAggregations(
+  aggregations: IOpenSearchAggregations,
+): IDashboardSummary {
   const statusBuckets = aggregations.by_status?.buckets ?? [];
   const errorBuckets = aggregations.by_error?.buckets ?? [];
   const companyBuckets = aggregations.by_company?.buckets ?? [];
@@ -46,13 +83,17 @@ function buildSummaryFromAggregations(aggregations: IOpenSearchAggregations): ID
     }
   }
 
-  const byCompany: Record<string, { total: number; errors: number }> = {};
+  const byCompany: Record<string, { total: number; errors: number; errorRate: number }> = {};
   for (const bucket of companyBuckets) {
-    byCompany[bucket.key] = { total: bucket.doc_count, errors: 0 };
+    byCompany[bucket.key] = { total: bucket.doc_count, errors: 0, errorRate: 0 };
   }
 
   const dailyTimeline = (
-    dateBuckets as Array<{ key_as_string?: string; key: string; doc_count: number }>
+    dateBuckets as Array<{
+      key_as_string?: string;
+      key: string;
+      doc_count: number;
+    }>
   ).map((bucket) => ({
     date: bucket.key_as_string ?? bucket.key,
     success: 0,
@@ -61,7 +102,10 @@ function buildSummaryFromAggregations(aggregations: IOpenSearchAggregations): ID
     total: bucket.doc_count,
   }));
 
-  const successRate = totalHits > 0 ? Math.round((successCount / totalHits) * 10000) / 100 : 0;
+  const successRate =
+    totalHits > 0 ? Math.round((successCount / totalHits) * 10000) / 100 : 0;
+
+  const errorDetails = buildErrorDetails(errorsByType, errorCount, totalHits, {}, {});
 
   return {
     totalHits,
@@ -70,6 +114,8 @@ function buildSummaryFromAggregations(aggregations: IOpenSearchAggregations): ID
     pendingCount,
     successRate,
     errorsByType,
+    errorDetails,
+    errorsByHttpCode: {},
     byCompany,
     dailyTimeline,
   };
@@ -83,14 +129,22 @@ function toDayKey(dateStr: string): string {
   }
 }
 
-function buildSummaryFromHits(hits: IOpenSearchHit<ILogEntry>[]): IDashboardSummary {
+function buildSummaryFromHits(
+  hits: IOpenSearchHit<ILogEntry>[],
+): IDashboardSummary {
   let successCount = 0;
   let errorCount = 0;
   let pendingCount = 0;
 
   const errorsByType: Record<string, number> = {};
-  const byCompany: Record<string, { total: number; errors: number }> = {};
-  const dailyMap: Record<string, { success: number; error: number; pending: number; total: number }> = {};
+  const errorsByHttpCode: Record<number, number> = {};
+  const errorHttpCodesMap: Record<string, Record<number, number>> = {};
+  const errorCompaniesMap: Record<string, Set<string>> = {};
+  const byCompany: Record<string, { total: number; errors: number; errorRate: number }> = {};
+  const dailyMap: Record<
+    string,
+    { success: number; error: number; pending: number; total: number }
+  > = {};
 
   for (const hit of hits) {
     const src = hit._source;
@@ -98,7 +152,8 @@ function buildSummaryFromHits(hits: IOpenSearchHit<ILogEntry>[]): IDashboardSumm
 
     const status = String(src.status);
     const isError = status === '2' || status === 'error';
-    const isPending = status === '1' || status === 'pending' || status === 'warning';
+    const isPending =
+      status === '1' || status === 'pending' || status === 'warning';
 
     if (isError) {
       errorCount++;
@@ -108,14 +163,43 @@ function buildSummaryFromHits(hits: IOpenSearchHit<ILogEntry>[]): IDashboardSumm
       successCount++;
     }
 
-    if (isError && src.statusMessage) {
-      errorsByType[src.statusMessage] = (errorsByType[src.statusMessage] || 0) + 1;
+    const companyId = src.userIdentifier?.value;
+
+    if (isError) {
+      let errorType = src.statusMessage || '';
+
+      if (!errorType && typeof src.data === 'string') {
+        const parsed = safeParseJson(src.data);
+        if (parsed && !parsed._rawPreview) {
+          errorType = extractErrorFromData(parsed) ?? '';
+        }
+      }
+
+      if (!errorType) {
+        errorType = 'Erro desconhecido';
+      }
+
+      errorsByType[errorType] = (errorsByType[errorType] || 0) + 1;
+
+      const httpCode = src.integration?.out?.httpCode;
+      if (httpCode) {
+        errorsByHttpCode[httpCode] = (errorsByHttpCode[httpCode] || 0) + 1;
+
+        if (!errorHttpCodesMap[errorType]) errorHttpCodesMap[errorType] = {};
+        errorHttpCodesMap[errorType][httpCode] =
+          (errorHttpCodesMap[errorType][httpCode] || 0) + 1;
+      }
+
+      if (companyId) {
+        if (!errorCompaniesMap[errorType])
+          errorCompaniesMap[errorType] = new Set();
+        errorCompaniesMap[errorType].add(companyId);
+      }
     }
 
-    const companyId = src.userIdentifier?.value;
     if (companyId) {
       if (!byCompany[companyId]) {
-        byCompany[companyId] = { total: 0, errors: 0 };
+        byCompany[companyId] = { total: 0, errors: 0, errorRate: 0 };
       }
       byCompany[companyId].total++;
       if (isError) byCompany[companyId].errors++;
@@ -131,12 +215,28 @@ function buildSummaryFromHits(hits: IOpenSearchHit<ILogEntry>[]): IDashboardSumm
     else dailyMap[dayKey].success++;
   }
 
+  for (const company of Object.values(byCompany)) {
+    company.errorRate =
+      company.total > 0
+        ? Math.round((company.errors / company.total) * 10000) / 100
+        : 0;
+  }
+
   const totalHits = successCount + errorCount + pendingCount;
-  const successRate = totalHits > 0 ? Math.round((successCount / totalHits) * 10000) / 100 : 0;
+  const successRate =
+    totalHits > 0 ? Math.round((successCount / totalHits) * 10000) / 100 : 0;
 
   const dailyTimeline = Object.entries(dailyMap)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, counts]) => ({ date, ...counts }));
+
+  const errorDetails = buildErrorDetails(
+    errorsByType,
+    errorCount,
+    totalHits,
+    errorHttpCodesMap,
+    errorCompaniesMap,
+  );
 
   return {
     totalHits,
@@ -145,6 +245,8 @@ function buildSummaryFromHits(hits: IOpenSearchHit<ILogEntry>[]): IDashboardSumm
     pendingCount,
     successRate,
     errorsByType,
+    errorDetails,
+    errorsByHttpCode,
     byCompany,
     dailyTimeline,
   };

@@ -131,6 +131,16 @@ export interface ICollection {
   updatedAt: string;
 }
 
+export interface IErrorDetail {
+  type: string;
+  count: number;
+  percentOfErrors: number;
+  percentOfTotal: number;
+  httpCodes: Record<number, number>;
+  primaryHttpCode: number | null;
+  affectedCompanies: string[];
+}
+
 export interface IDashboardSummary {
   totalHits: number;
   successCount: number;
@@ -138,6 +148,14 @@ export interface IDashboardSummary {
   pendingCount: number;
   successRate: number;
   errorsByType: Record<string, number>;
-  byCompany: Record<string, { total: number; errors: number }>;
-  dailyTimeline: { date: string; success: number; error: number; pending: number }[];
+  errorDetails: IErrorDetail[];
+  errorsByHttpCode: Record<number, number>;
+  byCompany: Record<string, { total: number; errors: number; errorRate: number }>;
+  dailyTimeline: {
+    date: string;
+    success: number;
+    error: number;
+    pending: number;
+    total: number;
+  }[];
 }

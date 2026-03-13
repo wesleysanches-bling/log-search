@@ -70,7 +70,7 @@ interface IParsedLogData extends Record<string, unknown> {
   _rawPreview?: string;
 }
 
-function safeParseJson(raw: string): IParsedLogData | null {
+export function safeParseJson(raw: string): IParsedLogData | null {
   if (!raw || typeof raw !== 'string') return null;
 
   try {
@@ -119,7 +119,7 @@ function extractRelevantFromData(parsed: Record<string, unknown>): Record<string
   return clean;
 }
 
-function extractErrorFromData(parsed: Record<string, unknown>): string | undefined {
+export function extractErrorFromData(parsed: Record<string, unknown>): string | undefined {
   const findError = (obj: unknown, depth = 0): string | undefined => {
     if (depth > 5 || !obj || typeof obj !== 'object') return undefined;
 
