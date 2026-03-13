@@ -77,7 +77,10 @@
       const end = new Date(filters.endDate).toLocaleDateString('pt-BR');
       parts.push(`Período: ${start} - ${end}`);
     }
-    if (filters.userIdentifier) parts.push(`Empresa: ${filters.userIdentifier}`);
+    if (filters.userIdentifier) {
+      const ids = filters.userIdentifier.split(',');
+      parts.push(ids.length > 1 ? `Empresas: ${ids.length} selecionadas` : `Empresa: ${ids[0]}`);
+    }
     if (filters.action) parts.push(`Ação: ${filters.action}`);
     if (filters.transaction) parts.push(`Transação: ${filters.transaction}`);
     if (filters.freeText) parts.push(`Busca livre: ${filters.freeText}`);

@@ -2,6 +2,7 @@
   import { ref } from 'vue';
   import DatePicker from 'primevue/datepicker';
   import InputText from 'primevue/inputtext';
+  import Chips from 'primevue/chips';
   import Select from 'primevue/select';
   import Button from 'primevue/button';
 
@@ -22,7 +23,7 @@
   }>();
 
   const dateRange = ref<Date[]>([]);
-  const userIdentifier = ref('');
+  const userIdentifiers = ref<string[]>([]);
   const selectedAction = ref<string | null>(null);
   const customAction = ref('');
   const transaction = ref('');
@@ -42,8 +43,11 @@
       endDate: getEndOfDay(dateRange.value[1]),
     };
 
-    if (userIdentifier.value.trim()) {
-      filters.userIdentifier = userIdentifier.value.trim();
+    const cleanIds = userIdentifiers.value
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (cleanIds.length) {
+      filters.userIdentifier = cleanIds.join(',');
     }
 
     const actionValue = useCustomAction.value ? customAction.value.trim() : selectedAction.value;
@@ -76,7 +80,7 @@
 
   function handleClear() {
     dateRange.value = [];
-    userIdentifier.value = '';
+    userIdentifiers.value = [];
     selectedAction.value = null;
     customAction.value = '';
     transaction.value = '';
@@ -85,7 +89,9 @@
 
   function loadFilters(filters: ISearchFilters) {
     dateRange.value = [new Date(filters.startDate), new Date(filters.endDate)];
-    userIdentifier.value = filters.userIdentifier || '';
+    userIdentifiers.value = filters.userIdentifier
+      ? filters.userIdentifier.split(',').map((id) => id.trim()).filter(Boolean)
+      : [];
     transaction.value = filters.transaction || '';
     freeText.value = filters.freeText || '';
 
@@ -133,13 +139,25 @@
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <label class="text-sm font-medium text-slate-600">ID da Empresa / Cliente</label>
-        <InputText
-          v-model="userIdentifier"
-          placeholder="Ex: 14879277031"
+        <label class="text-sm font-medium text-slate-600">
+          ID da Empresa / Cliente
+          <span
+            v-if="userIdentifiers.length > 1"
+            class="ml-1.5 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700"
+          >
+            {{ userIdentifiers.length }}
+          </span>
+        </label>
+        <Chips
+          v-model="userIdentifiers"
+          separator=","
+          placeholder="Digite o ID e pressione Enter"
           class="w-full"
-          @keyup.enter="handleSearch"
+          :allow-duplicate="false"
         />
+        <span class="text-xs text-slate-400">
+          Pressione Enter ou cole IDs separados por vírgula
+        </span>
       </div>
 
       <div class="flex flex-col gap-1.5">

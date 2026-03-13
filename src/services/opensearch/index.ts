@@ -14,7 +14,12 @@ function buildSearchQuery(filters: ISearchFilters): object {
   );
 
   if (filters.userIdentifier) {
-    mustClauses.push(esb.matchQuery('data', filters.userIdentifier));
+    const ids = filters.userIdentifier.split(',').map((id) => id.trim()).filter(Boolean);
+    if (ids.length === 1) {
+      mustClauses.push(esb.matchQuery('data', ids[0]));
+    } else {
+      mustClauses.push(esb.termsQuery('userIdentifier.value', ids));
+    }
   }
 
   if (filters.action) {

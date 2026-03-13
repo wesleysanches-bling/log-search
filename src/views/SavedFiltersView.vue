@@ -119,7 +119,10 @@
   function buildFilterTags(filter: ISavedFilter): string[] {
     const tags: string[] = [];
     const f = filter.filters;
-    if (f.userIdentifier) tags.push(`Empresa: ${f.userIdentifier}`);
+    if (f.userIdentifier) {
+      const ids = f.userIdentifier.split(',');
+      tags.push(ids.length > 1 ? `Empresas: ${ids.length} selecionadas` : `Empresa: ${ids[0]}`);
+    }
     if (f.action) tags.push(`Ação: ${f.action}`);
     if (f.transaction) tags.push(`TX: ${f.transaction.substring(0, 12)}...`);
     if (f.freeText) tags.push(`Busca: ${f.freeText}`);
