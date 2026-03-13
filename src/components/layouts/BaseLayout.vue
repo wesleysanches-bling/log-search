@@ -36,6 +36,19 @@
           </RouterLink>
 
           <RouterLink
+            to="/dashboard"
+            class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+            :class="
+              route.name === 'dashboard'
+                ? 'bg-primary-50 text-primary-700'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            "
+          >
+            <i class="pi pi-chart-bar text-xs" />
+            Dashboard
+          </RouterLink>
+
+          <RouterLink
             to="/filtros-salvos"
             class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors"
             :class="
@@ -51,6 +64,19 @@
               :value="savedFiltersStore.count"
               severity="secondary"
             />
+          </RouterLink>
+
+          <RouterLink
+            to="/colecoes"
+            class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+            :class="
+              route.name === 'collections'
+                ? 'bg-primary-50 text-primary-700'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+            "
+          >
+            <i class="pi pi-objects-column text-xs" />
+            Coleções
           </RouterLink>
 
           <RouterLink

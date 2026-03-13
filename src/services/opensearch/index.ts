@@ -6,15 +6,22 @@ import type { IErrorResponse } from '@/types/common-types';
 
 import esb from 'elastic-builder';
 
-function buildSearchQuery(filters: ISearchFilters): object {
+interface IBuildQueryOptions {
+  size?: number;
+  withAggregations?: boolean;
+  searchAfter?: (string | number)[];
+}
+
+function buildMustClauses(filters: ISearchFilters): esb.Query[] {
   const mustClauses: esb.Query[] = [];
 
-  mustClauses.push(
-    esb.rangeQuery('date').gte(filters.startDate).lt(filters.endDate),
-  );
+  mustClauses.push(esb.rangeQuery('date').gte(filters.startDate).lt(filters.endDate));
 
   if (filters.userIdentifier) {
-    const ids = filters.userIdentifier.split(',').map((id) => id.trim()).filter(Boolean);
+    const ids = filters.userIdentifier
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
     if (ids.length === 1) {
       mustClauses.push(esb.matchQuery('data', ids[0]));
     } else {
@@ -32,56 +39,137 @@ function buildSearchQuery(filters: ISearchFilters): object {
 
   if (filters.freeText) {
     mustClauses.push(
-      esb.multiMatchQuery(
-        ['data', 'integration.out.url', 'integration.out.destiny', 'statusMessage', 'host'],
-        filters.freeText,
-      ).type('phrase'),
+      esb
+        .multiMatchQuery(
+          ['data', 'integration.out.url', 'integration.out.destiny', 'statusMessage', 'host'],
+          filters.freeText,
+        )
+        .type('phrase'),
     );
   }
+
+  return mustClauses;
+}
+
+function buildSearchQuery(filters: ISearchFilters, options: IBuildQueryOptions = {}): object {
+  const { size = 1000, withAggregations = false, searchAfter } = options;
+  const mustClauses = buildMustClauses(filters);
 
   const requestBody = esb
     .requestBodySearch()
     .query(esb.boolQuery().must(mustClauses))
-    .size(1000)
-    .sort(esb.sort('date', 'desc'));
+    .size(size)
+    .sort(esb.sort('date', 'desc'))
+    .sort(esb.sort('_id', 'asc'));
 
-  return requestBody.toJSON();
+  const json = requestBody.toJSON() as Record<string, unknown>;
+
+  if (searchAfter) {
+    json.search_after = searchAfter;
+  }
+
+  if (withAggregations) {
+    json.aggs = {
+      by_status: { terms: { field: 'status', size: 20 } },
+      by_error: { terms: { field: 'statusMessage.keyword', size: 50, min_doc_count: 1 } },
+      by_company: { terms: { field: 'userIdentifier.value', size: 500 } },
+      by_date: {
+        date_histogram: {
+          field: 'date',
+          calendar_interval: 'day',
+          format: 'yyyy-MM-dd',
+        },
+      },
+    };
+  }
+
+  return json;
+}
+
+function handleError(error: unknown): never {
+  const err = error as { response?: { data?: { error?: unknown } } };
+  if (err?.response?.data?.error) {
+    throw err.response.data.error;
+  }
+  throw {
+    type: 'error',
+    message: 'Falha ao buscar logs no OpenSearch',
+  } as IErrorResponse;
 }
 
 export const OpenSearchService = {
   searchLogs: async (
     filters: ISearchFilters,
+    options?: IBuildQueryOptions,
   ): Promise<IOpenSearchResponse | IErrorResponse> => {
-    const query = buildSearchQuery(filters);
+    const query = buildSearchQuery(filters, options);
 
     return await HttpOpenSearch.post(`/${OPENSEARCH_INDEX}/_search`, query)
-      .then((response) => {
-        return response.data;
-      })
-      .catch((error) => {
-        if (error?.response?.data?.error) {
-          throw error.response.data.error;
-        }
-        throw {
-          type: 'error',
-          message: 'Falha ao buscar logs no OpenSearch',
-        } as IErrorResponse;
+      .then((response) => response.data)
+      .catch(handleError);
+  },
+
+  searchAllLogs: async (
+    filters: ISearchFilters,
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<IOpenSearchResponse> => {
+    const PAGE_SIZE = 1000;
+
+    const firstQuery = buildSearchQuery(filters, { size: PAGE_SIZE, withAggregations: true });
+    const firstResponse = (await HttpOpenSearch.post<IOpenSearchResponse>(
+      `/${OPENSEARCH_INDEX}/_search`,
+      firstQuery,
+    )
+      .then((r) => r.data)
+      .catch(handleError)) as IOpenSearchResponse;
+
+    const totalValue = firstResponse.hits.total.value;
+    const allHits = [...firstResponse.hits.hits];
+
+    onProgress?.(allHits.length, totalValue);
+
+    while (allHits.length < totalValue) {
+      const lastHit = allHits[allHits.length - 1];
+      const sortValues = [lastHit._source.date, lastHit._id];
+
+      const nextQuery = buildSearchQuery(filters, {
+        size: PAGE_SIZE,
+        searchAfter: sortValues,
       });
+
+      const nextResponse = (await HttpOpenSearch.post<IOpenSearchResponse>(
+        `/${OPENSEARCH_INDEX}/_search`,
+        nextQuery,
+      )
+        .then((r) => r.data)
+        .catch(handleError)) as IOpenSearchResponse;
+
+      if (nextResponse.hits.hits.length === 0) break;
+
+      allHits.push(...nextResponse.hits.hits);
+      onProgress?.(allHits.length, totalValue);
+    }
+
+    return {
+      ...firstResponse,
+      hits: {
+        ...firstResponse.hits,
+        hits: allHits,
+      },
+    };
+  },
+
+  searchWithAggregations: async (filters: ISearchFilters): Promise<IOpenSearchResponse> => {
+    const query = buildSearchQuery(filters, { size: 0, withAggregations: true });
+
+    return (await HttpOpenSearch.post<IOpenSearchResponse>(`/${OPENSEARCH_INDEX}/_search`, query)
+      .then((r) => r.data)
+      .catch(handleError)) as IOpenSearchResponse;
   },
 
   getIndexInfo: async (): Promise<unknown | IErrorResponse> => {
     return await HttpOpenSearch.get(`/${OPENSEARCH_INDEX}`)
-      .then((response) => {
-        return response.data;
-      })
-      .catch((error) => {
-        if (error?.response?.data?.error) {
-          throw error.response.data.error;
-        }
-        throw {
-          type: 'error',
-          message: 'Falha ao obter informações do índice',
-        } as IErrorResponse;
-      });
+      .then((response) => response.data)
+      .catch(handleError);
   },
 };

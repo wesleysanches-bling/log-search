@@ -19,6 +19,22 @@ export const routes: RouteRecordRaw[] = [
     },
   },
   {
+    path: PATHS.COLLECTIONS,
+    name: ROUTES.COLLECTIONS,
+    component: () => import('@/views/CollectionsView.vue'),
+    meta: {
+      title: 'OpenSearch Tool - Coleções',
+    },
+  },
+  {
+    path: PATHS.DASHBOARD,
+    name: ROUTES.DASHBOARD,
+    component: () => import('@/views/DashboardView.vue'),
+    meta: {
+      title: 'OpenSearch Tool - Dashboard',
+    },
+  },
+  {
     path: PATHS.LIBRARIES,
     name: ROUTES.LIBRARIES,
     component: () => import('@/views/LibrariesView.vue'),

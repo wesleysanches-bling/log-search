@@ -3,12 +3,15 @@
   import DataTable from 'primevue/datatable';
   import Column from 'primevue/column';
   import Button from 'primevue/button';
+  import Menu from 'primevue/menu';
 
   import { formatDateTime } from '@/utils/formatters/date-formatter';
+  import { exportAsCSV, exportAsJSON } from '@/utils/export-utils';
 
   import type { ILogEntryParsed } from '@/types/opensearch-types';
+  import type { MenuItem } from 'primevue/menuitem';
 
-  defineProps<{
+  const props = defineProps<{
     results: ILogEntryParsed[];
     totalHits: number;
     searchDuration: number;
@@ -20,6 +23,24 @@
   }>();
 
   const expandedRows = ref({});
+  const exportMenu = ref();
+
+  const exportMenuItems: MenuItem[] = [
+    {
+      label: 'Exportar como CSV',
+      icon: 'pi pi-file',
+      command: () => exportAsCSV(props.results),
+    },
+    {
+      label: 'Exportar como JSON',
+      icon: 'pi pi-file-export',
+      command: () => exportAsJSON(props.results),
+    },
+  ];
+
+  function toggleExportMenu(event: Event) {
+    exportMenu.value.toggle(event);
+  }
 
   const STATUS_MAP: Record<string, { label: string; class: string }> = {
     '0': { label: 'OK', class: 'bg-green-100 text-green-700' },
@@ -62,6 +83,17 @@
         </span>
         <span class="text-slate-300">|</span>
         <span>{{ searchDuration }}ms</span>
+        <span class="text-slate-300">|</span>
+        <Button
+          icon="pi pi-download"
+          label="Exportar"
+          text
+          size="small"
+          severity="secondary"
+          :disabled="results.length === 0"
+          @click="toggleExportMenu"
+        />
+        <Menu ref="exportMenu" :model="exportMenuItems" popup />
       </div>
     </div>
 

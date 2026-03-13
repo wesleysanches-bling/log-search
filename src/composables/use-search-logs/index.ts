@@ -32,6 +32,8 @@ export function useSearchLogs() {
   });
 
   const loadedResult = ref<IOpenSearchResponse | null>(null);
+  const scrollProgress = ref<{ loaded: number; total: number } | null>(null);
+  const isScrolling = ref(false);
 
   const activeResult = computed(() => loadedResult.value ?? searchResult.value ?? null);
 
@@ -53,6 +55,23 @@ export function useSearchLogs() {
     return activeResult.value?.took ?? 0;
   });
 
+  async function searchAllLogs(filters: ISearchFilters): Promise<IOpenSearchResponse> {
+    isScrolling.value = true;
+    scrollProgress.value = { loaded: 0, total: 0 };
+
+    try {
+      const response = await OpenSearchService.searchAllLogs(filters, (loaded, total) => {
+        scrollProgress.value = { loaded, total };
+      });
+
+      loadedResult.value = response;
+      return response;
+    } finally {
+      isScrolling.value = false;
+      scrollProgress.value = null;
+    }
+  }
+
   function loadSavedResults(response: IOpenSearchResponse) {
     loadedResult.value = response;
   }
@@ -72,5 +91,8 @@ export function useSearchLogs() {
     searchDuration,
     loadSavedResults,
     clearLoaded,
+    searchAllLogs,
+    scrollProgress,
+    isScrolling,
   };
 }

@@ -198,6 +198,107 @@ export function insightsPlugin(): Plugin {
             return;
           }
 
+          if (req.method === 'POST' && req.url === '/api/insights/dashboard-summary') {
+            const body = JSON.parse(await readBody(req));
+            const { dashboardData } = body;
+
+            if (!dashboardData) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'Campo "dashboardData" é obrigatório.' }));
+              return;
+            }
+
+            const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+            const { HumanMessage, SystemMessage } = await import('@langchain/core/messages');
+
+            const model = new ChatGoogleGenerativeAI({
+              model: geminiModel,
+              apiKey,
+              temperature: 0.3,
+              maxOutputTokens: 3072,
+            });
+
+            const dashboardSystemPrompt = `Você é um Analista de Operações Sênior especializado em monitoramento de sistemas de pagamento e integrações financeiras.
+
+Seu trabalho é gerar relatórios de acompanhamento detalhados e acionáveis a partir de dados de dashboard, em português brasileiro.
+
+REGRAS DE ANÁLISE:
+- Analise TODOS os tipos de erro presentes em "errorsByType" — explique o que cada um significa na prática e qual o impacto.
+- Se houver dados em "dailyTimeline", identifique TENDÊNCIAS: dias com pico de erro, melhora ou piora ao longo do tempo, padrões de horário.
+- Se houver dados em "byCompany", identifique empresas com taxa de erro acima da média.
+- Compare a taxa de sucesso com benchmarks razoáveis (acima de 95% é saudável, entre 90-95% requer atenção, abaixo de 90% é crítico).
+- Se pendingCount > 0, explique o que significa e se é preocupante.
+- Quando erros como FAILED_TO_SEND_PAYMENTS aparecerem, associe a problemas de provisionamento/saldo do processador.
+- Quando erros como UNABLE_TO_PAY_TODAY aparecerem, associe a tentativas fora do horário bancário.
+- Quando erros como BILL_ALREADY_EXPIRED aparecerem, associe a boletos vencidos sendo processados.
+- Quando erros como BILL_ALREADY_SENT aparecerem, associe a tentativas duplicadas.
+
+FORMATO DE RESPOSTA:
+Gere um relatório em texto corrido, estruturado em seções separadas por linhas em branco. Use este formato:
+
+RESUMO GERAL
+[2-3 frases com visão geral: total de operações, taxa de sucesso, classificação de saúde]
+
+DETALHAMENTO DE ERROS
+[Para cada tipo de erro significativo: o que é, quantas ocorrências, % do total de erros, causa provável e impacto]
+
+ANÁLISE DE TENDÊNCIA
+[Se houver dados temporais: evolução ao longo dos dias, se está melhorando ou piorando, dias problemáticos]
+
+PONTOS DE ATENÇÃO
+[Itens que requerem ação ou monitoramento próximo]
+
+RECOMENDAÇÕES
+[Ações sugeridas, priorizadas por urgência]
+
+REGRAS DE FORMATAÇÃO:
+- NÃO use markdown (sem #, **, -, etc).
+- NÃO use JSON.
+- Use apenas texto corrido com títulos em MAIÚSCULAS seguidos de quebra de linha.
+- Números devem usar formato brasileiro (1.234,56).
+- O texto deve ser colável diretamente em um chat corporativo (Teams, Slack, WhatsApp).`;
+
+            let ragContext = '';
+            try {
+              const searchQuery = Object.keys(dashboardData.errorsByType || {}).slice(0, 5).join(' ') || 'pagamento boleto erro integração';
+              const relevantDocs = await searchVectorStore(searchQuery, 3);
+              if (relevantDocs.length > 0) {
+                const docsText = relevantDocs
+                  .map((d, i) => `[${i + 1}] (fonte: ${d.source})\n${d.content}`)
+                  .join('\n---\n');
+                ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA:\n---\n${docsText}\n---\nUse essa documentação para enriquecer sua análise quando relevante.`;
+              }
+            } catch {
+              /* RAG opcional */
+            }
+
+            const dashboardPrompt = `Analise os seguintes dados de dashboard de operações e gere um relatório detalhado:${ragContext}
+
+DADOS DO DASHBOARD:
+${JSON.stringify(dashboardData, null, 2)}`;
+
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+
+            const stream = await model.stream([
+              new SystemMessage(dashboardSystemPrompt),
+              new HumanMessage(dashboardPrompt),
+            ]);
+
+            for await (const chunk of stream) {
+              const text = typeof chunk.content === 'string' ? chunk.content : '';
+              if (text) {
+                res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
+              }
+            }
+
+            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+            res.end();
+            return;
+          }
+
           if (req.method === 'POST' && req.url === '/api/insights/chat') {
             const body = JSON.parse(await readBody(req));
             const { sessionId, question } = body;

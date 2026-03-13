@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { ref } from 'vue';
+  import { ref, onMounted } from 'vue';
+  import { useRoute } from 'vue-router';
   import DatePicker from 'primevue/datepicker';
   import InputText from 'primevue/inputtext';
   import Chips from 'primevue/chips';
@@ -8,13 +9,19 @@
 
   import { COMMON_ACTIONS } from '@/constants/opensearch';
   import { getStartOfDay, getEndOfDay } from '@/utils/formatters/date-formatter';
+  import { useCollectionsStore } from '@/stores/collections-store';
 
   import type { ISearchFilters } from '@/types/opensearch-types';
   import type { IDropdownOption } from '@/types/common-types';
 
-  defineProps<{
+  const route = useRoute();
+  const collectionsStore = useCollectionsStore();
+
+  const props = defineProps<{
     isSearching: boolean;
     isConnected: boolean;
+    compact?: boolean;
+    searchLabel?: string;
   }>();
 
   const emit = defineEmits<{
@@ -30,10 +37,29 @@
   const freeText = ref('');
   const useCustomAction = ref(false);
 
+  const selectedCollection = ref<string | null>(null);
+
   const actionOptions: IDropdownOption[] = COMMON_ACTIONS.map((action) => ({
     label: action,
     value: action,
   }));
+
+  function handleCollectionSelect() {
+    if (!selectedCollection.value) {
+      userIdentifiers.value = [];
+      return;
+    }
+    const ids = collectionsStore.getIdentifiersString(selectedCollection.value);
+    userIdentifiers.value = ids.split(',').filter(Boolean);
+  }
+
+  onMounted(() => {
+    collectionsStore.loadFromDisk();
+    const collectionIds = route.query.collectionIds as string;
+    if (collectionIds) {
+      userIdentifiers.value = collectionIds.split(',').filter(Boolean);
+    }
+  });
 
   function buildFilters(): ISearchFilters | null {
     if (dateRange.value.length < 2) return null;
@@ -114,8 +140,8 @@
 </script>
 
 <template>
-  <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-    <div class="mb-4 flex items-center gap-2">
+  <div :class="compact ? '' : 'rounded-lg border border-slate-200 bg-white p-5 shadow-sm'">
+    <div v-if="!compact" class="mb-4 flex items-center gap-2">
       <i class="pi pi-filter text-slate-600" />
       <h2 class="text-base font-semibold text-slate-700">Filtros de Busca</h2>
     </div>
@@ -148,6 +174,25 @@
             {{ userIdentifiers.length }}
           </span>
         </label>
+        <div v-if="collectionsStore.count > 0" class="mb-1">
+          <Select
+            v-model="selectedCollection"
+            :options="collectionsStore.sortedCollections"
+            option-label="name"
+            option-value="id"
+            placeholder="Carregar de uma coleção..."
+            show-clear
+            class="w-full"
+            @change="handleCollectionSelect"
+          >
+            <template #option="{ option }">
+              <div class="flex items-center gap-2">
+                <span>{{ option.name }}</span>
+                <span class="text-xs text-slate-400">({{ option.identifiers.length }} IDs)</span>
+              </div>
+            </template>
+          </Select>
+        </div>
         <Chips
           v-model="userIdentifiers"
           separator=","
@@ -215,14 +260,15 @@
 
     <div class="mt-5 flex items-center gap-3 border-t border-slate-100 pt-4">
       <Button
-        label="Buscar Logs"
-        icon="pi pi-search"
+        :label="props.searchLabel ?? 'Buscar Logs'"
+        :icon="compact ? 'pi pi-chart-bar' : 'pi pi-search'"
         :loading="isSearching"
         :disabled="dateRange.length < 2 || !isConnected"
-        size="large"
+        :size="compact ? undefined : 'large'"
         @click="handleSearch"
       />
       <Button
+        v-if="!compact"
         label="Salvar Filtro"
         icon="pi pi-bookmark"
         severity="secondary"

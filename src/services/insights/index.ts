@@ -59,6 +59,45 @@ export const InsightsService = {
     return { fullText, sessionId };
   },
 
+  generateDashboardSummary: async (
+    dashboardData: Record<string, unknown>,
+    onChunk: (text: string) => void,
+  ): Promise<string> => {
+    const response = await HttpInsights.post('/dashboard-summary', { dashboardData }, {
+      responseType: 'stream',
+      adapter: 'fetch',
+    }).catch((error) => {
+      if (error?.response?.data?.error) {
+        throw { type: 'error', message: error.response.data.error } as IErrorResponse;
+      }
+      throw {
+        type: 'error',
+        message: 'Falha ao gerar resumo do dashboard',
+      } as IErrorResponse;
+    });
+
+    const reader = (response.data as ReadableStream).getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const events = parseSSELines(decoder.decode(value, { stream: true }));
+      for (const event of events) {
+        if (event.type === 'chunk' && event.content) {
+          fullText += event.content;
+          onChunk(event.content);
+        } else if (event.type === 'error') {
+          throw { type: 'error', message: event.content } as IErrorResponse;
+        }
+      }
+    }
+
+    return fullText;
+  },
+
   chat: async (
     sessionId: string,
     question: string,

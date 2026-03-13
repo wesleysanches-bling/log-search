@@ -21,6 +21,25 @@ export interface IOpenSearchHit<T = ILogEntry> {
   _source: T;
 }
 
+export interface IAggregationBucket {
+  key: string;
+  doc_count: number;
+}
+
+export interface IAggregationResult {
+  buckets: IAggregationBucket[];
+  doc_count_error_upper_bound?: number;
+  sum_other_doc_count?: number;
+}
+
+export interface IOpenSearchAggregations {
+  by_status?: IAggregationResult;
+  by_error?: IAggregationResult;
+  by_company?: IAggregationResult;
+  by_date?: IAggregationResult;
+  [key: string]: IAggregationResult | undefined;
+}
+
 export interface IOpenSearchResponse<T = ILogEntry> {
   took: number;
   timed_out: boolean;
@@ -38,6 +57,8 @@ export interface IOpenSearchResponse<T = ILogEntry> {
     max_score: number | null;
     hits: IOpenSearchHit<T>[];
   };
+  aggregations?: IOpenSearchAggregations;
+  _scroll_id?: string;
 }
 
 export interface ILogEntry {
@@ -99,4 +120,24 @@ export interface ISavedFilter {
   searchDuration?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ICollection {
+  id: string;
+  name: string;
+  description?: string;
+  identifiers: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IDashboardSummary {
+  totalHits: number;
+  successCount: number;
+  errorCount: number;
+  pendingCount: number;
+  successRate: number;
+  errorsByType: Record<string, number>;
+  byCompany: Record<string, { total: number; errors: number }>;
+  dailyTimeline: { date: string; success: number; error: number; pending: number }[];
 }
