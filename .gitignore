@@ -21,4 +21,8 @@ npm-debug.log*
 # Saved filters (storage)
 storage/
 
+# Server build
+server-bundle/
+release/
+
 .env

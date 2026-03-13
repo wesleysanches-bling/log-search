@@ -2,8 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Plugin } from 'vite';
 
-const STORAGE_DIR = path.resolve(__dirname, 'storage');
-const COLLECTIONS_DIR = path.resolve(__dirname, 'storage/collections');
+function getBaseDir(): string {
+  if (process.env.STORAGE_BASE_DIR) return process.env.STORAGE_BASE_DIR;
+  if (__dirname.startsWith('/snapshot') || __dirname.startsWith('C:\\snapshot')) {
+    return path.dirname(process.execPath);
+  }
+  return __dirname;
+}
 
 function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) {
@@ -100,19 +105,29 @@ function handleCrudRoutes(
   })();
 }
 
+export async function storageMiddleware(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  next: () => void,
+) {
+  const base = getBaseDir();
+  const collectionsDir = path.resolve(base, 'storage/collections');
+  const storageDir = path.resolve(base, 'storage');
+
+  const handledCollections = await handleCrudRoutes(req, res, '/api/collections', collectionsDir);
+  if (handledCollections) return;
+
+  const handledStorage = await handleCrudRoutes(req, res, '/api/storage', storageDir);
+  if (handledStorage) return;
+
+  next();
+}
+
 export function storagePlugin(): Plugin {
   return {
     name: 'vite-plugin-storage',
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        const handledCollections = await handleCrudRoutes(req, res, '/api/collections', COLLECTIONS_DIR);
-        if (handledCollections) return;
-
-        const handledStorage = await handleCrudRoutes(req, res, '/api/storage', STORAGE_DIR);
-        if (handledStorage) return;
-
-        next();
-      });
+      server.middlewares.use(storageMiddleware);
     },
   };
 }

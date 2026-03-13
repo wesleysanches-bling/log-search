@@ -1,12 +1,48 @@
 <script setup lang="ts">
+  import { ref, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
   import Toast from 'primevue/toast';
   import Badge from 'primevue/badge';
+  import ConfirmDialog from 'primevue/confirmdialog';
+  import { useConfirm } from 'primevue/useconfirm';
 
   import { useSavedFiltersStore } from '@/stores/saved-filters-store';
 
   const route = useRoute();
   const savedFiltersStore = useSavedFiltersStore();
+  const confirm = useConfirm();
+
+  const isStandaloneServer = ref(false);
+
+  onMounted(async () => {
+    try {
+      const res = await fetch('/api/server/status');
+      if (res.ok) {
+        const data = await res.json();
+        isStandaloneServer.value = data.mode === 'standalone';
+      }
+    } catch {
+      /* dev mode — endpoint não existe */
+    }
+  });
+
+  function handleShutdown() {
+    confirm.require({
+      message: 'Deseja encerrar o servidor? A aplicação ficará indisponível.',
+      header: 'Desligar servidor',
+      icon: 'pi pi-power-off',
+      acceptLabel: 'Desligar',
+      rejectLabel: 'Cancelar',
+      acceptClass: 'p-button-danger',
+      accept: async () => {
+        try {
+          await fetch('/api/server/shutdown', { method: 'POST' });
+        } catch {
+          /* conexão fecha quando o server desliga */
+        }
+      },
+    });
+  }
 </script>
 
 <template>
@@ -91,6 +127,16 @@
             <i class="pi pi-book text-xs" />
             Biblioteca
           </RouterLink>
+
+          <button
+            v-if="isStandaloneServer"
+            class="ml-2 flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-100"
+            title="Desligar servidor"
+            @click="handleShutdown"
+          >
+            <i class="pi pi-power-off text-xs" />
+            Desligar
+          </button>
         </nav>
       </div>
     </header>
@@ -100,5 +146,6 @@
     </main>
 
     <Toast position="top-right" />
+    <ConfirmDialog />
   </div>
 </template>

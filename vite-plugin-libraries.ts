@@ -1,12 +1,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { loadEnv } from 'vite';
 import type { Plugin } from 'vite';
 
-const LIBRARIES_DIR = path.resolve(__dirname, 'storage/libraries');
-const METADATA_FILE = path.join(LIBRARIES_DIR, '.metadata.json');
-const VECTORSTORE_FILE = path.join(LIBRARIES_DIR, '.vectorstore.json');
+function getLibrariesDir(): string {
+  let base = process.env.STORAGE_BASE_DIR;
+  if (!base) {
+    base = (__dirname.startsWith('/snapshot') || __dirname.startsWith('C:\\snapshot'))
+      ? path.dirname(process.execPath)
+      : __dirname;
+  }
+  return path.resolve(base, 'storage/libraries');
+}
+
+function getMetadataFile(): string {
+  return path.join(getLibrariesDir(), '.metadata.json');
+}
+
+function getVectorStoreFile(): string {
+  return path.join(getLibrariesDir(), '.vectorstore.json');
+}
+
 
 interface DocumentMeta {
   id: string;
@@ -32,35 +46,38 @@ let documentsMeta: DocumentMeta[] = [];
 let embeddingModel: any = null;
 
 function ensureDir() {
-  if (!fs.existsSync(LIBRARIES_DIR)) {
-    fs.mkdirSync(LIBRARIES_DIR, { recursive: true });
+  const dir = getLibrariesDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
 function loadMetadata(): DocumentMeta[] {
-  if (!fs.existsSync(METADATA_FILE)) return [];
+  const metaFile = getMetadataFile();
+  if (!fs.existsSync(metaFile)) return [];
   try {
-    return JSON.parse(fs.readFileSync(METADATA_FILE, 'utf-8'));
+    return JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
   } catch {
     return [];
   }
 }
 
 function saveMetadata(docs: DocumentMeta[]) {
-  fs.writeFileSync(METADATA_FILE, JSON.stringify(docs, null, 2));
+  fs.writeFileSync(getMetadataFile(), JSON.stringify(docs, null, 2));
 }
 
 function loadVectorStore(): VectorEntry[] {
-  if (!fs.existsSync(VECTORSTORE_FILE)) return [];
+  const vsFile = getVectorStoreFile();
+  if (!fs.existsSync(vsFile)) return [];
   try {
-    return JSON.parse(fs.readFileSync(VECTORSTORE_FILE, 'utf-8'));
+    return JSON.parse(fs.readFileSync(vsFile, 'utf-8'));
   } catch {
     return [];
   }
 }
 
 function saveVectorStore(entries: VectorEntry[]) {
-  fs.writeFileSync(VECTORSTORE_FILE, JSON.stringify(entries));
+  fs.writeFileSync(getVectorStoreFile(), JSON.stringify(entries));
 }
 
 function fileHash(filePath: string): string {
@@ -202,205 +219,214 @@ function splitMultipart(body: Buffer, boundary: string): Buffer[] {
   return parts;
 }
 
-export function librariesPlugin(): Plugin {
-  let apiKey: string | undefined;
+let _librariesApiKey: string | undefined;
 
-  return {
-    name: 'vite-plugin-libraries',
-    configureServer(server) {
-      ensureDir();
-      const env = loadEnv('development', path.resolve(__dirname), '');
-      apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+export async function initLibraries(apiKey?: string) {
+  ensureDir();
+  _librariesApiKey = apiKey || process.env.GEMINI_API_KEY;
 
-      documentsMeta = loadMetadata();
-      vectorEntries = loadVectorStore();
+  documentsMeta = loadMetadata();
+  vectorEntries = loadVectorStore();
 
-      console.log(`[libraries-plugin] Startup: ${documentsMeta.length} docs, ${vectorEntries.length} vetores carregados`);
+  console.log(`[libraries] Startup: ${documentsMeta.length} docs, ${vectorEntries.length} vetores carregados`);
 
-      if (apiKey && vectorEntries.length > 0) {
-        initEmbeddingModel(apiKey)
-          .then(() => console.log('[libraries-plugin] Embedding model inicializado com sucesso'))
-          .catch((err) => console.error('[libraries-plugin] Erro ao inicializar embedding model:', err));
-      } else if (!apiKey) {
-        console.warn('[libraries-plugin] GEMINI_API_KEY não encontrada — busca vetorial desativada');
+  if (_librariesApiKey && vectorEntries.length > 0) {
+    try {
+      await initEmbeddingModel(_librariesApiKey);
+      console.log('[libraries] Embedding model inicializado com sucesso');
+    } catch (err) {
+      console.error('[libraries] Erro ao inicializar embedding model:', err);
+    }
+  } else if (!_librariesApiKey) {
+    console.warn('[libraries] GEMINI_API_KEY não encontrada — busca vetorial desativada');
+  }
+}
+
+export async function librariesMiddleware(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  next: () => void,
+) {
+  if (!req.url?.startsWith('/api/libraries')) return next();
+  res.setHeader('Content-Type', 'application/json');
+
+  const apiKey = _librariesApiKey;
+
+  try {
+    if (req.method === 'GET' && (req.url === '/api/libraries' || req.url === '/api/libraries/')) {
+      const stats = {
+        documents: documentsMeta,
+        stats: {
+          totalDocuments: documentsMeta.length,
+          totalChunks: vectorEntries.length,
+          formats: documentsMeta.reduce(
+            (acc, d) => {
+              acc[d.format] = (acc[d.format] || 0) + 1;
+              return acc;
+            },
+            {} as Record<string, number>,
+          ),
+          lastIndexedAt: documentsMeta
+            .filter((d) => d.indexed)
+            .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))[0]?.uploadedAt ?? null,
+        },
+      };
+      res.end(JSON.stringify(stats));
+      return;
+    }
+
+    if (req.method === 'GET' && req.url?.match(/^\/api\/libraries\/([^/]+)\/preview$/)) {
+      const id = req.url.match(/^\/api\/libraries\/([^/]+)\/preview$/)![1];
+      const doc = documentsMeta.find((d) => d.id === id);
+      if (!doc) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: 'Documento não encontrado' }));
+        return;
       }
 
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/libraries')) return next();
-        res.setHeader('Content-Type', 'application/json');
+      const { extractText } = await import('./src/utils/document-loader');
+      const filePath = path.join(getLibrariesDir(), `${doc.id}${doc.format}`);
+      const text = await extractText(filePath);
+      res.end(JSON.stringify({ text: text.substring(0, 5000), totalLength: text.length }));
+      return;
+    }
 
-        try {
-          // GET /api/libraries — list all documents
-          if (req.method === 'GET' && (req.url === '/api/libraries' || req.url === '/api/libraries/')) {
-            const stats = {
-              documents: documentsMeta,
-              stats: {
-                totalDocuments: documentsMeta.length,
-                totalChunks: vectorEntries.length,
-                formats: documentsMeta.reduce(
-                  (acc, d) => {
-                    acc[d.format] = (acc[d.format] || 0) + 1;
-                    return acc;
-                  },
-                  {} as Record<string, number>,
-                ),
-                lastIndexedAt: documentsMeta
-                  .filter((d) => d.indexed)
-                  .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))[0]?.uploadedAt ?? null,
-              },
-            };
-            res.end(JSON.stringify(stats));
-            return;
-          }
+    if (req.method === 'POST' && req.url === '/api/libraries/upload') {
+      if (!apiKey) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
+        return;
+      }
 
-          // GET /api/libraries/:id/preview — preview document text
-          if (req.method === 'GET' && req.url?.match(/^\/api\/libraries\/([^/]+)\/preview$/)) {
-            const id = req.url.match(/^\/api\/libraries\/([^/]+)\/preview$/)![1];
-            const doc = documentsMeta.find((d) => d.id === id);
-            if (!doc) {
-              res.statusCode = 404;
-              res.end(JSON.stringify({ error: 'Documento não encontrado' }));
-              return;
-            }
+      const { file } = await readMultipartBody(req);
+      if (!file) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: 'Nenhum arquivo enviado.' }));
+        return;
+      }
 
-            const { extractText } = await import('./src/utils/document-loader');
-            const filePath = path.join(LIBRARIES_DIR, `${doc.id}${doc.format}`);
-            const text = await extractText(filePath);
-            res.end(JSON.stringify({ text: text.substring(0, 5000), totalLength: text.length }));
-            return;
-          }
+      const { isSupportedFormat, extractText } = await import('./src/utils/document-loader');
+      if (!isSupportedFormat(file.name)) {
+        res.statusCode = 400;
+        res.end(
+          JSON.stringify({
+            error: `Formato não suportado: ${path.extname(file.name)}. Use: txt, json, md, pdf, docx`,
+          }),
+        );
+        return;
+      }
 
-          // POST /api/libraries/upload — upload file
-          if (req.method === 'POST' && req.url === '/api/libraries/upload') {
-            if (!apiKey) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
-              return;
-            }
+      const id = crypto.randomUUID().substring(0, 8);
+      const ext = path.extname(file.name).toLowerCase();
+      const filePath = path.join(getLibrariesDir(), `${id}${ext}`);
 
-            const { file } = await readMultipartBody(req);
-            if (!file) {
-              res.statusCode = 400;
-              res.end(JSON.stringify({ error: 'Nenhum arquivo enviado.' }));
-              return;
-            }
+      fs.writeFileSync(filePath, file.data);
 
-            const { isSupportedFormat, extractText } = await import('./src/utils/document-loader');
-            if (!isSupportedFormat(file.name)) {
-              res.statusCode = 400;
-              res.end(
-                JSON.stringify({
-                  error: `Formato não suportado: ${path.extname(file.name)}. Use: txt, json, md, pdf, docx`,
-                }),
-              );
-              return;
-            }
+      await initEmbeddingModel(apiKey);
+      const text = await extractText(filePath);
+      const chunksCount = await indexDocument(id, text, file.name);
 
-            const id = crypto.randomUUID().substring(0, 8);
-            const ext = path.extname(file.name).toLowerCase();
-            const filePath = path.join(LIBRARIES_DIR, `${id}${ext}`);
+      const meta: DocumentMeta = {
+        id,
+        name: path.basename(file.name, ext),
+        originalName: file.name,
+        format: ext,
+        sizeBytes: file.data.length,
+        chunksCount,
+        uploadedAt: new Date().toISOString(),
+        indexed: true,
+        hash: fileHash(filePath),
+      };
 
-            fs.writeFileSync(filePath, file.data);
+      documentsMeta.push(meta);
+      saveMetadata(documentsMeta);
 
-            await initEmbeddingModel(apiKey);
-            const text = await extractText(filePath);
-            const chunksCount = await indexDocument(id, text, file.name);
+      res.end(JSON.stringify({ ok: true, document: meta }));
+      return;
+    }
 
-            const meta: DocumentMeta = {
-              id,
-              name: path.basename(file.name, ext),
-              originalName: file.name,
-              format: ext,
-              sizeBytes: file.data.length,
-              chunksCount,
-              uploadedAt: new Date().toISOString(),
-              indexed: true,
-              hash: fileHash(filePath),
-            };
+    if (req.method === 'DELETE' && req.url?.match(/^\/api\/libraries\/([^/]+)$/)) {
+      const id = req.url.match(/^\/api\/libraries\/([^/]+)$/)![1];
+      const doc = documentsMeta.find((d) => d.id === id);
+      if (!doc) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: 'Documento não encontrado' }));
+        return;
+      }
 
-            documentsMeta.push(meta);
-            saveMetadata(documentsMeta);
+      const filePath = path.join(getLibrariesDir(), `${doc.id}${doc.format}`);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-            res.end(JSON.stringify({ ok: true, document: meta }));
-            return;
-          }
+      removeDocumentVectors(id);
+      documentsMeta = documentsMeta.filter((d) => d.id !== id);
+      saveMetadata(documentsMeta);
 
-          // DELETE /api/libraries/:id — delete document
-          if (req.method === 'DELETE' && req.url?.match(/^\/api\/libraries\/([^/]+)$/)) {
-            const id = req.url.match(/^\/api\/libraries\/([^/]+)$/)![1];
-            const doc = documentsMeta.find((d) => d.id === id);
-            if (!doc) {
-              res.statusCode = 404;
-              res.end(JSON.stringify({ error: 'Documento não encontrado' }));
-              return;
-            }
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
 
-            const filePath = path.join(LIBRARIES_DIR, `${doc.id}${doc.format}`);
-            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (req.method === 'POST' && req.url === '/api/libraries/reindex') {
+      if (!apiKey) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
+        return;
+      }
 
-            removeDocumentVectors(id);
-            documentsMeta = documentsMeta.filter((d) => d.id !== id);
-            saveMetadata(documentsMeta);
+      await initEmbeddingModel(apiKey);
+      const { extractText } = await import('./src/utils/document-loader');
 
-            res.end(JSON.stringify({ ok: true }));
-            return;
-          }
+      vectorEntries = [];
+      for (const doc of documentsMeta) {
+        const filePath = path.join(getLibrariesDir(), `${doc.id}${doc.format}`);
+        if (!fs.existsSync(filePath)) continue;
 
-          // POST /api/libraries/reindex — reindex all documents
-          if (req.method === 'POST' && req.url === '/api/libraries/reindex') {
-            if (!apiKey) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
-              return;
-            }
+        const text = await extractText(filePath);
+        doc.chunksCount = await indexDocument(doc.id, text, doc.originalName);
+        doc.indexed = true;
+      }
 
-            await initEmbeddingModel(apiKey);
-            const { extractText } = await import('./src/utils/document-loader');
+      saveMetadata(documentsMeta);
+      res.end(JSON.stringify({ ok: true, totalChunks: vectorEntries.length }));
+      return;
+    }
 
-            vectorEntries = [];
-            for (const doc of documentsMeta) {
-              const filePath = path.join(LIBRARIES_DIR, `${doc.id}${doc.format}`);
-              if (!fs.existsSync(filePath)) continue;
-
-              const text = await extractText(filePath);
-              doc.chunksCount = await indexDocument(doc.id, text, doc.originalName);
-              doc.indexed = true;
-            }
-
-            saveMetadata(documentsMeta);
-            res.end(JSON.stringify({ ok: true, totalChunks: vectorEntries.length }));
-            return;
-          }
-
-          // POST /api/libraries/search — manual vector search (debug)
-          if (req.method === 'POST' && req.url === '/api/libraries/search') {
-            const body = await new Promise<string>((resolve) => {
-              let data = '';
-              req.on('data', (chunk: Buffer) => (data += chunk.toString()));
-              req.on('end', () => resolve(data));
-            });
-            const { query, topK } = JSON.parse(body);
-
-            if (!apiKey) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
-              return;
-            }
-
-            await initEmbeddingModel(apiKey);
-            const results = await searchVectorStore(query, topK ?? 5);
-            res.end(JSON.stringify({ results }));
-            return;
-          }
-
-          res.statusCode = 404;
-          res.end(JSON.stringify({ error: 'Endpoint não encontrado' }));
-        } catch (err) {
-          console.error('[libraries-plugin] Error:', err);
-          res.statusCode = 500;
-          res.end(JSON.stringify({ error: String(err) }));
-        }
+    if (req.method === 'POST' && req.url === '/api/libraries/search') {
+      const body = await new Promise<string>((resolve) => {
+        let data = '';
+        req.on('data', (chunk: Buffer) => (data += chunk.toString()));
+        req.on('end', () => resolve(data));
       });
+      const { query, topK } = JSON.parse(body);
+
+      if (!apiKey) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada.' }));
+        return;
+      }
+
+      await initEmbeddingModel(apiKey);
+      const results = await searchVectorStore(query, topK ?? 5);
+      res.end(JSON.stringify({ results }));
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'Endpoint não encontrado' }));
+  } catch (err) {
+    console.error('[libraries] Error:', err);
+    res.statusCode = 500;
+    res.end(JSON.stringify({ error: String(err) }));
+  }
+}
+
+export function librariesPlugin(): Plugin {
+  return {
+    name: 'vite-plugin-libraries',
+    async configureServer(server) {
+      const { loadEnv } = await import('vite');
+      const env = loadEnv('development', path.resolve(__dirname), '');
+      initLibraries(env.GEMINI_API_KEY || process.env.GEMINI_API_KEY);
+      server.middlewares.use(librariesMiddleware);
     },
   };
 }

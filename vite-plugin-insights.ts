@@ -1,4 +1,3 @@
-import { loadEnv } from 'vite';
 import type { Plugin } from 'vite';
 import path from 'node:path';
 import { searchVectorStore } from './vite-plugin-libraries';
@@ -97,129 +96,129 @@ function buildRagQuery(summary: Record<string, unknown>): string {
   return parts.join(' ') || 'logs de integração erros API';
 }
 
-export function insightsPlugin(): Plugin {
-  let geminiApiKey: string | undefined;
-  let geminiModel: string;
+let _geminiApiKey: string | undefined;
+let _geminiModel: string = 'gemini-2.0-flash';
 
-  return {
-    name: 'vite-plugin-insights',
-    configureServer(server) {
-      const env = loadEnv('development', path.resolve(__dirname), '');
-      geminiApiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-      geminiModel = env.GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+export function initInsights(apiKey: string, model?: string) {
+  _geminiApiKey = apiKey;
+  _geminiModel = model || 'gemini-2.0-flash';
+}
 
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/insights')) return next();
+export async function insightsMiddleware(
+  req: import('http').IncomingMessage,
+  res: import('http').ServerResponse,
+  next: () => void,
+) {
+  if (!req.url?.startsWith('/api/insights')) return next();
 
-        const apiKey = geminiApiKey;
-        if (!apiKey) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada. Defina a variável de ambiente.' }));
-          return;
-        }
+  const apiKey = _geminiApiKey;
+  if (!apiKey) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'GEMINI_API_KEY não configurada. Defina a variável de ambiente.' }));
+    return;
+  }
 
-        try {
-          if (req.method === 'POST' && req.url === '/api/insights/analyze') {
-            const body = JSON.parse(await readBody(req));
-            const { summary, sessionId } = body;
+  try {
+    if (req.method === 'POST' && req.url === '/api/insights/analyze') {
+      const body = JSON.parse(await readBody(req));
+      const { summary, sessionId } = body;
 
-            if (!summary) {
-              res.statusCode = 400;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Campo "summary" é obrigatório.' }));
-              return;
-            }
+      if (!summary) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Campo "summary" é obrigatório.' }));
+        return;
+      }
 
-            const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
-            const { HumanMessage, SystemMessage, AIMessage } = await import('@langchain/core/messages');
+      const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+      const { HumanMessage, SystemMessage, AIMessage: _AIMessage } = await import('@langchain/core/messages');
+      void _AIMessage;
 
-            const model = new ChatGoogleGenerativeAI({
-              model: geminiModel,
-              apiKey,
-              temperature: 0.3,
-              maxOutputTokens: 4096,
-            });
+      const model = new ChatGoogleGenerativeAI({
+        model: _geminiModel,
+        apiKey,
+        temperature: 0.3,
+        maxOutputTokens: 4096,
+      });
 
-            const summaryText = JSON.stringify(summary, null, 2);
+      const summaryText = JSON.stringify(summary, null, 2);
 
-            let ragContext = '';
-            try {
-              const searchQuery = buildRagQuery(summary);
-              console.log('[insights-plugin] [RAG] Query de busca:', searchQuery);
-              const relevantDocs = await searchVectorStore(searchQuery, 5);
-              console.log(`[insights-plugin] [RAG] ${relevantDocs.length} chunks encontrados`);
-              if (relevantDocs.length > 0) {
-                for (const doc of relevantDocs) {
-                  console.log(`[insights-plugin] [RAG]   - ${doc.source} (score: ${(doc.score * 100).toFixed(1)}%) | "${doc.content.substring(0, 80)}..."`);
-                }
-                const docsText = relevantDocs
-                  .map((d, i) => `[${i + 1}] (fonte: ${d.source}, relevância: ${(d.score * 100).toFixed(0)}%)\n${d.content}`)
-                  .join('\n---\n');
-                ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA (encontrada automaticamente na biblioteca):\n---\n${docsText}\n---\n\nUse essa documentação para enriquecer sua análise quando relevante. Cite a fonte quando usar informações dela.`;
-              } else {
-                console.log('[insights-plugin] [RAG] Nenhum chunk encontrado. Vector store pode estar vazio ou não inicializado.');
-              }
-            } catch (ragError) {
-              console.error('[insights-plugin] [RAG] Erro na busca vetorial:', ragError);
-            }
-
-            const userPrompt = `Analise o seguinte resumo estatístico de logs de integração e forneça insights:${ragContext}\n\nRESUMO ESTATÍSTICO DOS LOGS:\n${summaryText}`;
-
-            const messages = [
-              new SystemMessage(SYSTEM_PROMPT),
-              new HumanMessage(userPrompt),
-            ];
-
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-
-            let fullResponse = '';
-
-            const stream = await model.stream(messages);
-            for await (const chunk of stream) {
-              const text = typeof chunk.content === 'string' ? chunk.content : '';
-              if (text) {
-                fullResponse += text;
-                res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
-              }
-            }
-
-            const sid = sessionId || crypto.randomUUID();
-            conversationStore.set(sid, [
-              { role: 'human', content: userPrompt },
-              { role: 'ai', content: fullResponse },
-            ]);
-
-            res.write(`data: ${JSON.stringify({ type: 'done', sessionId: sid })}\n\n`);
-            res.end();
-            return;
+      let ragContext = '';
+      try {
+        const searchQuery = buildRagQuery(summary);
+        console.log('[insights] [RAG] Query:', searchQuery);
+        const relevantDocs = await searchVectorStore(searchQuery, 5);
+        console.log(`[insights] [RAG] ${relevantDocs.length} chunks encontrados`);
+        if (relevantDocs.length > 0) {
+          for (const doc of relevantDocs) {
+            console.log(`[insights] [RAG]   - ${doc.source} (score: ${(doc.score * 100).toFixed(1)}%)`);
           }
+          const docsText = relevantDocs
+            .map((d, i) => `[${i + 1}] (fonte: ${d.source}, relevância: ${(d.score * 100).toFixed(0)}%)\n${d.content}`)
+            .join('\n---\n');
+          ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA (encontrada automaticamente na biblioteca):\n---\n${docsText}\n---\n\nUse essa documentação para enriquecer sua análise quando relevante. Cite a fonte quando usar informações dela.`;
+        }
+      } catch (ragError) {
+        console.error('[insights] [RAG] Erro na busca vetorial:', ragError);
+      }
 
-          if (req.method === 'POST' && req.url === '/api/insights/dashboard-summary') {
-            const body = JSON.parse(await readBody(req));
-            const { dashboardData } = body;
+      const userPrompt = `Analise o seguinte resumo estatístico de logs de integração e forneça insights:${ragContext}\n\nRESUMO ESTATÍSTICO DOS LOGS:\n${summaryText}`;
 
-            if (!dashboardData) {
-              res.statusCode = 400;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Campo "dashboardData" é obrigatório.' }));
-              return;
-            }
+      const messages = [
+        new SystemMessage(SYSTEM_PROMPT),
+        new HumanMessage(userPrompt),
+      ];
 
-            const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
-            const { HumanMessage, SystemMessage } = await import('@langchain/core/messages');
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Access-Control-Allow-Origin', '*');
 
-            const model = new ChatGoogleGenerativeAI({
-              model: geminiModel,
-              apiKey,
-              temperature: 0.3,
-              maxOutputTokens: 3072,
-            });
+      let fullResponse = '';
 
-            const dashboardSystemPrompt = `Você é um Analista de Operações Sênior especializado em monitoramento de sistemas de pagamento e integrações financeiras.
+      const stream = await model.stream(messages);
+      for await (const chunk of stream) {
+        const text = typeof chunk.content === 'string' ? chunk.content : '';
+        if (text) {
+          fullResponse += text;
+          res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
+        }
+      }
+
+      const sid = sessionId || crypto.randomUUID();
+      conversationStore.set(sid, [
+        { role: 'human', content: userPrompt },
+        { role: 'ai', content: fullResponse },
+      ]);
+
+      res.write(`data: ${JSON.stringify({ type: 'done', sessionId: sid })}\n\n`);
+      res.end();
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/insights/dashboard-summary') {
+      const body = JSON.parse(await readBody(req));
+      const { dashboardData } = body;
+
+      if (!dashboardData) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Campo "dashboardData" é obrigatório.' }));
+        return;
+      }
+
+      const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+      const { HumanMessage, SystemMessage } = await import('@langchain/core/messages');
+
+      const model = new ChatGoogleGenerativeAI({
+        model: _geminiModel,
+        apiKey,
+        temperature: 0.3,
+        maxOutputTokens: 3072,
+      });
+
+      const dashboardSystemPrompt = `Você é um Analista de Operações Sênior especializado em monitoramento de sistemas de pagamento e integrações financeiras.
 
 Seu trabalho é gerar relatórios de acompanhamento detalhados e acionáveis a partir de dados de dashboard, em português brasileiro.
 
@@ -259,124 +258,136 @@ REGRAS DE FORMATAÇÃO:
 - Números devem usar formato brasileiro (1.234,56).
 - O texto deve ser colável diretamente em um chat corporativo (Teams, Slack, WhatsApp).`;
 
-            let ragContext = '';
-            try {
-              const searchQuery = Object.keys(dashboardData.errorsByType || {}).slice(0, 5).join(' ') || 'pagamento boleto erro integração';
-              const relevantDocs = await searchVectorStore(searchQuery, 3);
-              if (relevantDocs.length > 0) {
-                const docsText = relevantDocs
-                  .map((d, i) => `[${i + 1}] (fonte: ${d.source})\n${d.content}`)
-                  .join('\n---\n');
-                ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA:\n---\n${docsText}\n---\nUse essa documentação para enriquecer sua análise quando relevante.`;
-              }
-            } catch {
-              /* RAG opcional */
-            }
+      let ragContext = '';
+      try {
+        const searchQuery = Object.keys(dashboardData.errorsByType || {}).slice(0, 5).join(' ') || 'pagamento boleto erro integração';
+        const relevantDocs = await searchVectorStore(searchQuery, 3);
+        if (relevantDocs.length > 0) {
+          const docsText = relevantDocs
+            .map((d, i) => `[${i + 1}] (fonte: ${d.source})\n${d.content}`)
+            .join('\n---\n');
+          ragContext = `\n\nDOCUMENTAÇÃO DE REFERÊNCIA:\n---\n${docsText}\n---\nUse essa documentação para enriquecer sua análise quando relevante.`;
+        }
+      } catch {
+        /* RAG opcional */
+      }
 
-            const dashboardPrompt = `Analise os seguintes dados de dashboard de operações e gere um relatório detalhado:${ragContext}
+      const dashboardPrompt = `Analise os seguintes dados de dashboard de operações e gere um relatório detalhado:${ragContext}
 
 DADOS DO DASHBOARD:
 ${JSON.stringify(dashboardData, null, 2)}`;
 
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
 
-            const stream = await model.stream([
-              new SystemMessage(dashboardSystemPrompt),
-              new HumanMessage(dashboardPrompt),
-            ]);
+      const stream = await model.stream([
+        new SystemMessage(dashboardSystemPrompt),
+        new HumanMessage(dashboardPrompt),
+      ]);
 
-            for await (const chunk of stream) {
-              const text = typeof chunk.content === 'string' ? chunk.content : '';
-              if (text) {
-                res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
-              }
-            }
-
-            res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-            res.end();
-            return;
-          }
-
-          if (req.method === 'POST' && req.url === '/api/insights/chat') {
-            const body = JSON.parse(await readBody(req));
-            const { sessionId, question } = body;
-
-            if (!sessionId || !question) {
-              res.statusCode = 400;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Campos "sessionId" e "question" são obrigatórios.' }));
-              return;
-            }
-
-            const history = conversationStore.get(sessionId);
-            if (!history) {
-              res.statusCode = 404;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ error: 'Sessão não encontrada. Gere uma análise primeiro.' }));
-              return;
-            }
-
-            const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
-            const { HumanMessage, SystemMessage, AIMessage } = await import('@langchain/core/messages');
-
-            const model = new ChatGoogleGenerativeAI({
-              model: geminiModel,
-              apiKey,
-              temperature: 0.4,
-              maxOutputTokens: 2048,
-            });
-
-            const messages = [
-              new SystemMessage(
-                SYSTEM_PROMPT +
-                '\n\nVocê está em modo de conversa follow-up. O usuário já recebeu a análise inicial e agora tem uma pergunta específica. Responda de forma direta e concisa em texto simples (não JSON). Use markdown para formatação se necessário.',
-              ),
-              ...history.map((msg) =>
-                msg.role === 'human' ? new HumanMessage(msg.content) : new AIMessage(msg.content),
-              ),
-              new HumanMessage(question),
-            ];
-
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-
-            let fullResponse = '';
-
-            const stream = await model.stream(messages);
-            for await (const chunk of stream) {
-              const text = typeof chunk.content === 'string' ? chunk.content : '';
-              if (text) {
-                fullResponse += text;
-                res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
-              }
-            }
-
-            history.push({ role: 'human', content: question });
-            history.push({ role: 'ai', content: fullResponse });
-
-            res.write(`data: ${JSON.stringify({ type: 'done', sessionId })}\n\n`);
-            res.end();
-            return;
-          }
-
-          res.statusCode = 404;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: 'Endpoint não encontrado.' }));
-        } catch (err) {
-          console.error('[insights-plugin] Error:', err);
-          if (!res.headersSent) {
-            res.statusCode = 500;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: String(err) }));
-          } else {
-            res.write(`data: ${JSON.stringify({ type: 'error', content: String(err) })}\n\n`);
-            res.end();
-          }
+      for await (const chunk of stream) {
+        const text = typeof chunk.content === 'string' ? chunk.content : '';
+        if (text) {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
         }
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/insights/chat') {
+      const body = JSON.parse(await readBody(req));
+      const { sessionId, question } = body;
+
+      if (!sessionId || !question) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Campos "sessionId" e "question" são obrigatórios.' }));
+        return;
+      }
+
+      const history = conversationStore.get(sessionId);
+      if (!history) {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'Sessão não encontrada. Gere uma análise primeiro.' }));
+        return;
+      }
+
+      const { ChatGoogleGenerativeAI } = await import('@langchain/google-genai');
+      const { HumanMessage, SystemMessage, AIMessage } = await import('@langchain/core/messages');
+
+      const model = new ChatGoogleGenerativeAI({
+        model: _geminiModel,
+        apiKey,
+        temperature: 0.4,
+        maxOutputTokens: 2048,
       });
+
+      const messages = [
+        new SystemMessage(
+          SYSTEM_PROMPT +
+          '\n\nVocê está em modo de conversa follow-up. O usuário já recebeu a análise inicial e agora tem uma pergunta específica. Responda de forma direta e concisa em texto simples (não JSON). Use markdown para formatação se necessário.',
+        ),
+        ...history.map((msg) =>
+          msg.role === 'human' ? new HumanMessage(msg.content) : new AIMessage(msg.content),
+        ),
+        new HumanMessage(question),
+      ];
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      let fullResponse = '';
+
+      const stream = await model.stream(messages);
+      for await (const chunk of stream) {
+        const text = typeof chunk.content === 'string' ? chunk.content : '';
+        if (text) {
+          fullResponse += text;
+          res.write(`data: ${JSON.stringify({ type: 'chunk', content: text })}\n\n`);
+        }
+      }
+
+      history.push({ role: 'human', content: question });
+      history.push({ role: 'ai', content: fullResponse });
+
+      res.write(`data: ${JSON.stringify({ type: 'done', sessionId })}\n\n`);
+      res.end();
+      return;
+    }
+
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Endpoint não encontrado.' }));
+  } catch (err) {
+    console.error('[insights-plugin] Error:', err);
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: String(err) }));
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', content: String(err) })}\n\n`);
+      res.end();
+    }
+  }
+}
+
+export function insightsPlugin(): Plugin {
+  return {
+    name: 'vite-plugin-insights',
+    async configureServer(server) {
+      const { loadEnv } = await import('vite');
+      const env = loadEnv('development', path.resolve(__dirname), '');
+      initInsights(
+        env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || '',
+        env.GEMINI_MODEL || process.env.GEMINI_MODEL,
+      );
+      server.middlewares.use(insightsMiddleware);
     },
   };
 }
