@@ -462,6 +462,10 @@
     }
   }
 
+  function handlePrint() {
+    window.print();
+  }
+
   function copySummaryToClipboard() {
     navigator.clipboard.writeText(aiSummaryText.value);
     toast.add({
@@ -579,7 +583,7 @@
     </div>
 
     <!-- Ações do Dashboard (exportar, progresso) -->
-    <div v-if="summary" class="flex items-center gap-3">
+    <div v-if="summary" class="flex items-center gap-3 print:hidden">
       <Button
         label="Exportar Tudo (CSV)"
         icon="pi pi-download"
@@ -587,6 +591,13 @@
         outlined
         :loading="isFetchingAll"
         @click="handleExportAll"
+      />
+      <Button
+        label="Imprimir / PDF"
+        icon="pi pi-print"
+        severity="secondary"
+        outlined
+        @click="handlePrint"
       />
       <span class="text-sm text-slate-400">
         {{ dataSource === 'saved' ? 'Exporta os dados dos filtros salvos selecionados' : 'Busca todos os registros e exporta' }}
