@@ -64,6 +64,22 @@ if (!fs.existsSync(path.join(outDir, 'storage'))) {
   fs.mkdirSync(path.join(outDir, 'storage'), { recursive: true });
 }
 
+const desktopEntry = `[Desktop Entry]
+Name=OpenSearch Tool
+Comment=Busca de logs inteligente
+Exec=bash -c 'cd "$(dirname "$0")" && ./opensearch-tool-linux'
+Terminal=true
+Type=Application
+Icon=utilities-system-monitor
+Categories=Utility;
+`;
+const desktopPath = path.join(outDir, 'OpenSearch Tool.desktop');
+fs.writeFileSync(desktopPath, desktopEntry);
+fs.chmodSync(desktopPath, 0o755);
+
+const batContent = `@echo off\r\ncd /d "%~dp0"\r\nstart "" opensearch-tool.exe\r\n`;
+fs.writeFileSync(path.join(outDir, 'Iniciar.bat'), batContent);
+
 const readme = `# OpenSearch Tool - Release ${dateStr}
 
 ## Como usar
