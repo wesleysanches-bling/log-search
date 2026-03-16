@@ -1,6 +1,7 @@
 <script setup lang="ts">
-  import { ref, onMounted } from 'vue';
+  import { ref, computed, onMounted } from 'vue';
   import { useRoute } from 'vue-router';
+  import { useToast } from 'primevue/usetoast';
   import DatePicker from 'primevue/datepicker';
   import InputText from 'primevue/inputtext';
   import Chips from 'primevue/chips';
@@ -15,6 +16,7 @@
   import type { IDropdownOption } from '@/types/common-types';
 
   const route = useRoute();
+  const toast = useToast();
   const collectionsStore = useCollectionsStore();
 
   const props = defineProps<{
@@ -38,11 +40,104 @@
   const useCustomAction = ref(false);
 
   const selectedCollection = ref<string | null>(null);
+  const activePreset = ref<string | null>(null);
 
   const actionOptions: IDropdownOption[] = COMMON_ACTIONS.map((action) => ({
     label: action,
     value: action,
   }));
+
+  const dateHint = computed(() => {
+    if (dateRange.value.length === 1 && dateRange.value[1] == null) {
+      return 'Agora selecione a data final para completar o período';
+    }
+    return '';
+  });
+
+  interface DatePreset {
+    label: string;
+    key: string;
+    range: () => [Date, Date];
+  }
+
+  const datePresets: DatePreset[] = [
+    {
+      label: 'Hoje',
+      key: 'today',
+      range: () => {
+        const d = new Date();
+        return [d, d];
+      },
+    },
+    {
+      label: 'Ontem',
+      key: 'yesterday',
+      range: () => {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        return [d, d];
+      },
+    },
+    {
+      label: '7 dias',
+      key: '7d',
+      range: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 7);
+        return [start, end];
+      },
+    },
+    {
+      label: '15 dias',
+      key: '15d',
+      range: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 15);
+        return [start, end];
+      },
+    },
+    {
+      label: '30 dias',
+      key: '30d',
+      range: () => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 30);
+        return [start, end];
+      },
+    },
+    {
+      label: 'Esta semana',
+      key: 'this_week',
+      range: () => {
+        const now = new Date();
+        const start = new Date(now);
+        start.setDate(now.getDate() - now.getDay());
+        return [start, now];
+      },
+    },
+    {
+      label: 'Este mês',
+      key: 'this_month',
+      range: () => {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        return [start, now];
+      },
+    },
+  ];
+
+  function applyPreset(preset: DatePreset) {
+    const [start, end] = preset.range();
+    dateRange.value = [start, end];
+    activePreset.value = preset.key;
+  }
+
+  function handleDateChange() {
+    activePreset.value = null;
+  }
 
   function handleCollectionSelect() {
     if (!selectedCollection.value) {
@@ -62,11 +157,14 @@
   });
 
   function buildFilters(): ISearchFilters | null {
-    if (dateRange.value.length < 2) return null;
+    if (dateRange.value.length === 0) return null;
+
+    const startDate = dateRange.value[0];
+    const endDate = dateRange.value[1] ?? startDate;
 
     const filters: ISearchFilters = {
-      startDate: getStartOfDay(dateRange.value[0]),
-      endDate: getEndOfDay(dateRange.value[1]),
+      startDate: getStartOfDay(startDate),
+      endDate: getEndOfDay(endDate),
     };
 
     const cleanIds = userIdentifiers.value
@@ -92,13 +190,33 @@
     return filters;
   }
 
+  function hasCompleteRange(): boolean {
+    return dateRange.value.length >= 2 && dateRange.value[1] != null;
+  }
+
+  function autoCompleteSingleDate() {
+    if (dateRange.value.length === 1 || (dateRange.value.length >= 2 && dateRange.value[1] == null)) {
+      dateRange.value = [dateRange.value[0], dateRange.value[0]];
+      toast.add({
+        severity: 'info',
+        summary: 'Período ajustado',
+        detail: 'Apenas uma data foi selecionada. A busca será feita para o dia inteiro.',
+        life: 3000,
+      });
+    }
+  }
+
   function handleSearch() {
+    if (dateRange.value.length === 0) return;
+    autoCompleteSingleDate();
     const filters = buildFilters();
     if (!filters) return;
     emit('search', filters);
   }
 
   function handleSave() {
+    if (dateRange.value.length === 0) return;
+    autoCompleteSingleDate();
     const filters = buildFilters();
     if (!filters) return;
     emit('save', filters);
@@ -111,6 +229,7 @@
     customAction.value = '';
     transaction.value = '';
     freeText.value = '';
+    activePreset.value = null;
   }
 
   function loadFilters(filters: ISearchFilters) {
@@ -152,16 +271,39 @@
           Período
           <span class="text-red-500">*</span>
         </label>
+
+        <div class="mb-1 flex flex-wrap gap-1.5">
+          <button
+            v-for="preset in datePresets"
+            :key="preset.key"
+            class="rounded-full border px-2.5 py-1 text-xs font-medium transition-colors"
+            :class="
+              activePreset === preset.key
+                ? 'border-primary-400 bg-primary-50 text-primary-700'
+                : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700'
+            "
+            @click="applyPreset(preset)"
+          >
+            {{ preset.label }}
+          </button>
+        </div>
+
         <DatePicker
           v-model="dateRange"
           selection-mode="range"
           date-format="dd/mm/yy"
-          placeholder="Selecione o período"
+          placeholder="Selecione o período ou use um atalho acima"
           show-icon
           show-button-bar
           :manual-input="false"
           class="w-full"
+          @update:model-value="handleDateChange"
         />
+
+        <div v-if="dateHint" class="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700">
+          <i class="pi pi-arrow-right text-amber-500" />
+          {{ dateHint }}
+        </div>
       </div>
 
       <div class="flex flex-col gap-1.5">
@@ -263,7 +405,7 @@
         :label="props.searchLabel ?? 'Buscar Logs'"
         :icon="compact ? 'pi pi-chart-bar' : 'pi pi-search'"
         :loading="isSearching"
-        :disabled="dateRange.length < 2 || !isConnected"
+        :disabled="dateRange.length === 0 || !isConnected"
         :size="compact ? undefined : 'large'"
         @click="handleSearch"
       />
@@ -273,7 +415,7 @@
         icon="pi pi-bookmark"
         severity="secondary"
         outlined
-        :disabled="dateRange.length < 2"
+        :disabled="dateRange.length === 0"
         @click="handleSave"
       />
       <Button
