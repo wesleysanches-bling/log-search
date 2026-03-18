@@ -129,6 +129,15 @@ function toDayKey(dateStr: string): string {
   }
 }
 
+function toHourKey(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    return `${String(d.getUTCHours()).padStart(2, '0')}:00`;
+  } catch {
+    return 'unknown';
+  }
+}
+
 function buildSummaryFromHits(
   hits: IOpenSearchHit<ILogEntry>[],
 ): IDashboardSummary {
@@ -142,6 +151,10 @@ function buildSummaryFromHits(
   const errorCompaniesMap: Record<string, Set<string>> = {};
   const byCompany: Record<string, { total: number; errors: number; errorRate: number }> = {};
   const dailyMap: Record<
+    string,
+    { success: number; error: number; pending: number; total: number }
+  > = {};
+  const hourlyMap: Record<
     string,
     { success: number; error: number; pending: number; total: number }
   > = {};
@@ -213,6 +226,15 @@ function buildSummaryFromHits(
     if (isError) dailyMap[dayKey].error++;
     else if (isPending) dailyMap[dayKey].pending++;
     else dailyMap[dayKey].success++;
+
+    const hourKey = toHourKey(src.date);
+    if (!hourlyMap[hourKey]) {
+      hourlyMap[hourKey] = { success: 0, error: 0, pending: 0, total: 0 };
+    }
+    hourlyMap[hourKey].total++;
+    if (isError) hourlyMap[hourKey].error++;
+    else if (isPending) hourlyMap[hourKey].pending++;
+    else hourlyMap[hourKey].success++;
   }
 
   for (const company of Object.values(byCompany)) {
@@ -226,7 +248,10 @@ function buildSummaryFromHits(
   const successRate =
     totalHits > 0 ? Math.round((successCount / totalHits) * 10000) / 100 : 0;
 
-  const dailyTimeline = Object.entries(dailyMap)
+  const isSingleDay = Object.keys(dailyMap).length <= 1;
+  const timelineSource = isSingleDay ? hourlyMap : dailyMap;
+
+  const dailyTimeline = Object.entries(timelineSource)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, counts]) => ({ date, ...counts }));
 

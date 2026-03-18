@@ -51,6 +51,10 @@ function buildMustClauses(filters: ISearchFilters): esb.Query[] {
   return mustClauses;
 }
 
+function isSameDayRange(startDate: string, endDate: string): boolean {
+  return startDate.slice(0, 10) === endDate.slice(0, 10);
+}
+
 function buildSearchQuery(filters: ISearchFilters, options: IBuildQueryOptions = {}): object {
   const { size = 1000, withAggregations = false, searchAfter } = options;
   const mustClauses = buildMustClauses(filters);
@@ -69,6 +73,7 @@ function buildSearchQuery(filters: ISearchFilters, options: IBuildQueryOptions =
   }
 
   if (withAggregations) {
+    const isSingleDay = isSameDayRange(filters.startDate, filters.endDate);
     json.aggs = {
       by_status: { terms: { field: 'status', size: 20 } },
       by_error: { terms: { field: 'statusMessage.keyword', size: 50, min_doc_count: 1 } },
@@ -76,8 +81,8 @@ function buildSearchQuery(filters: ISearchFilters, options: IBuildQueryOptions =
       by_date: {
         date_histogram: {
           field: 'date',
-          calendar_interval: 'day',
-          format: 'yyyy-MM-dd',
+          calendar_interval: isSingleDay ? 'hour' : 'day',
+          format: isSingleDay ? 'HH:mm' : 'yyyy-MM-dd',
         },
       },
     };

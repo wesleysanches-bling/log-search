@@ -113,6 +113,13 @@
     };
   });
 
+  const timelineTitle = computed(() => {
+    if (!summary.value) return 'Evolução Diária';
+    const timeline = summary.value.dailyTimeline;
+    const looksHourly = timeline.length > 0 && /^\d{2}:\d{2}$/.test(timeline[0].date);
+    return looksHourly ? 'Evolução por Hora' : 'Evolução Diária';
+  });
+
   const statusChartData = computed(() => {
     if (!summary.value) return null;
     const { successCount, errorCount, pendingCount } = summary.value;
@@ -696,7 +703,7 @@
     <!-- Gráficos: Timeline + Status -->
     <div v-if="summary" class="grid grid-cols-1 gap-5 lg:grid-cols-3">
       <div class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
-        <h3 class="mb-3 text-sm font-semibold text-slate-700">Evolução Diária</h3>
+        <h3 class="mb-3 text-sm font-semibold text-slate-700">{{ timelineTitle }}</h3>
         <div v-if="timelineChartData" style="height: 280px; position: relative">
           <canvas ref="timelineCanvas" />
         </div>
@@ -866,16 +873,10 @@
           <template #body="{ data }">
             <div v-if="data.affectedCompanies.length > 0" class="flex flex-wrap gap-1">
               <Tag
-                v-for="company in data.affectedCompanies.slice(0, 4)"
+                v-for="company in data.affectedCompanies"
                 :key="company"
                 :value="company"
                 severity="secondary"
-                class="text-[10px]"
-              />
-              <Tag
-                v-if="data.affectedCompanies.length > 4"
-                :value="`+${data.affectedCompanies.length - 4}`"
-                severity="info"
                 class="text-[10px]"
               />
             </div>

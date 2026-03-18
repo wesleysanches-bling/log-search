@@ -24,13 +24,15 @@ export function toISOString(date: Date): string {
 }
 
 export function getStartOfDay(date: Date): string {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}T00:00:00.000Z`;
 }
 
 export function getEndOfDay(date: Date): string {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}T23:59:59.999Z`;
 }
