@@ -59,12 +59,25 @@
     return savedFiltersStore.sortedFilters.filter((f) => f.results?.hits?.hits?.length);
   });
 
+  const timelineIsHourly = computed(() => {
+    if (!summary.value) return false;
+    const timeline = summary.value.dailyTimeline;
+    return timeline.length > 0 && /^\d{2}:\d{2}$/.test(timeline[0].date);
+  });
+
+  const timelineChartType = computed<'line' | 'bar'>(() => {
+    if (timelineIsHourly.value) return 'line';
+    if (!summary.value) return 'line';
+    return summary.value.dailyTimeline.length <= 3 ? 'bar' : 'line';
+  });
+
   const timelineChartData = computed(() => {
     if (!summary.value) return null;
     const timeline = summary.value.dailyTimeline;
     if (timeline.length === 0) return null;
 
     const hasBreakdown = timeline.some((d) => d.success > 0 || d.error > 0);
+    const useLine = timelineChartType.value === 'line';
 
     if (hasBreakdown) {
       return {
@@ -74,24 +87,24 @@
             label: 'Sucesso',
             data: timeline.map((d) => d.success),
             borderColor: '#22c55e',
-            backgroundColor: 'rgba(34, 197, 94, 0.1)',
-            fill: true,
+            backgroundColor: useLine ? 'rgba(34, 197, 94, 0.1)' : '#22c55e',
+            fill: useLine,
             tension: 0.3,
           },
           {
             label: 'Erro',
             data: timeline.map((d) => d.error),
             borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            fill: true,
+            backgroundColor: useLine ? 'rgba(239, 68, 68, 0.1)' : '#ef4444',
+            fill: useLine,
             tension: 0.3,
           },
           {
             label: 'Pendente',
             data: timeline.map((d) => d.pending),
             borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            fill: true,
+            backgroundColor: useLine ? 'rgba(245, 158, 11, 0.1)' : '#f59e0b',
+            fill: useLine,
             tension: 0.3,
           },
         ],
@@ -105,8 +118,8 @@
           label: 'Total',
           data: timeline.map((d) => d.total),
           borderColor: '#6366f1',
-          backgroundColor: 'rgba(99, 102, 241, 0.1)',
-          fill: true,
+          backgroundColor: useLine ? 'rgba(99, 102, 241, 0.1)' : '#6366f1',
+          fill: useLine,
           tension: 0.3,
         },
       ],
@@ -114,10 +127,8 @@
   });
 
   const timelineTitle = computed(() => {
-    if (!summary.value) return 'Evolução Diária';
-    const timeline = summary.value.dailyTimeline;
-    const looksHourly = timeline.length > 0 && /^\d{2}:\d{2}$/.test(timeline[0].date);
-    return looksHourly ? 'Evolução por Hora' : 'Evolução Diária';
+    if (timelineIsHourly.value) return 'Evolução por Hora';
+    return 'Evolução Diária';
   });
 
   const statusChartData = computed(() => {
@@ -212,7 +223,7 @@
       if (timelineChart) timelineChart.destroy();
 
       timelineChart = new Chart(timelineCanvas.value, {
-        type: 'line',
+        type: timelineChartType.value,
         data,
         options: {
           responsive: true,
