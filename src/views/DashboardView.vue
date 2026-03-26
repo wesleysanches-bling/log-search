@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
   import { Chart } from 'chart.js/auto';
+  import ChartDataLabels from 'chartjs-plugin-datalabels';
   import Button from 'primevue/button';
   import DataTable from 'primevue/datatable';
   import Column from 'primevue/column';
@@ -17,6 +18,7 @@
   import { useCredentialsStore } from '@/stores/credentials-store';
   import { useSavedFiltersStore } from '@/stores/saved-filters-store';
   import { exportAsCSV } from '@/utils/export-utils';
+  import { generateDashboardPdf } from '@/utils/pdf-report';
   import { OpenSearchService } from '@/services/opensearch';
   import { InsightsService } from '@/services/insights';
 
@@ -251,11 +253,17 @@
       statusChart = new Chart(statusCanvas.value, {
         type: 'doughnut',
         data,
+        plugins: [ChartDataLabels],
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
             legend: { position: 'bottom', labels: { padding: 16 } },
+            datalabels: {
+              color: '#fff',
+              font: { weight: 'bold', size: 13 },
+              formatter: (value: number) => value > 0 ? value.toLocaleString('pt-BR') : '',
+            },
           },
         },
       });
@@ -308,11 +316,17 @@
       httpCodeChart = new Chart(httpCodeCanvas.value, {
         type: 'doughnut',
         data,
+        plugins: [ChartDataLabels],
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
             legend: { position: 'bottom', labels: { padding: 12, font: { size: 11 } } },
+            datalabels: {
+              color: '#fff',
+              font: { weight: 'bold', size: 13 },
+              formatter: (value: number) => value > 0 ? value.toLocaleString('pt-BR') : '',
+            },
           },
         },
       });
@@ -480,8 +494,32 @@
     }
   }
 
-  function handlePrint() {
-    window.print();
+  function handleDownloadPdf() {
+    if (!summary.value) return;
+
+    generateDashboardPdf({
+      summary: summary.value,
+      charts: {
+        timeline: timelineCanvas.value,
+        status: statusCanvas.value,
+        errorsBar: errorsBarCanvas.value,
+        httpCode: httpCodeCanvas.value,
+      },
+      meta: {
+        dataSource: dataSource.value,
+        filterNames: dataSource.value === 'saved' ? loadedFilterNames.value : undefined,
+        startDate: lastFilters.value?.startDate,
+        endDate: lastFilters.value?.endDate,
+      },
+      aiSummaryText: aiSummaryText.value || undefined,
+    });
+
+    toast.add({
+      severity: 'success',
+      summary: 'PDF gerado',
+      detail: 'O relatório foi baixado com sucesso.',
+      life: 3000,
+    });
   }
 
   function copySummaryToClipboard() {
@@ -611,11 +649,11 @@
         @click="handleExportAll"
       />
       <Button
-        label="Imprimir / PDF"
-        icon="pi pi-print"
+        label="Baixar PDF"
+        icon="pi pi-file-pdf"
         severity="secondary"
         outlined
-        @click="handlePrint"
+        @click="handleDownloadPdf"
       />
       <span class="text-sm text-slate-400">
         {{ dataSource === 'saved' ? 'Exporta os dados dos filtros salvos selecionados' : 'Busca todos os registros e exporta' }}
