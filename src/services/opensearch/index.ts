@@ -22,11 +22,7 @@ function buildMustClauses(filters: ISearchFilters): esb.Query[] {
       .split(',')
       .map((id) => id.trim())
       .filter(Boolean);
-    if (ids.length === 1) {
-      mustClauses.push(esb.matchQuery('data', ids[0]));
-    } else {
-      mustClauses.push(esb.termsQuery('userIdentifier.value', ids));
-    }
+    mustClauses.push(esb.termsQuery('userIdentifier.value', ids));
   }
 
   if (filters.action) {
@@ -41,7 +37,14 @@ function buildMustClauses(filters: ISearchFilters): esb.Query[] {
     mustClauses.push(
       esb
         .multiMatchQuery(
-          ['data', 'integration.out.url', 'integration.out.destiny', 'statusMessage', 'host'],
+          [
+            'data',
+            'integration.out.url',
+            'integration.out.destiny',
+            'statusMessage',
+            'host',
+            'ctx.app.name',
+          ],
           filters.freeText,
         )
         .type('phrase'),
