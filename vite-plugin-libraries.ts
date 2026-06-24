@@ -4,13 +4,7 @@ import crypto from 'node:crypto';
 import type { Plugin } from 'vite';
 
 function getLibrariesDir(): string {
-  let base = process.env.STORAGE_BASE_DIR;
-  if (!base) {
-    base = (__dirname.startsWith('/snapshot') || __dirname.startsWith('C:\\snapshot'))
-      ? path.dirname(process.execPath)
-      : __dirname;
-  }
-  return path.resolve(base, 'storage/libraries');
+  return path.resolve(__dirname, 'storage/libraries');
 }
 
 function getMetadataFile(): string {

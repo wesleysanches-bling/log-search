@@ -3,10 +3,6 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 
 function getBaseDir(): string {
-  if (process.env.STORAGE_BASE_DIR) return process.env.STORAGE_BASE_DIR;
-  if (__dirname.startsWith('/snapshot') || __dirname.startsWith('C:\\snapshot')) {
-    return path.dirname(process.execPath);
-  }
   return __dirname;
 }
 
